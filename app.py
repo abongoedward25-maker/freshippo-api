@@ -1,177 +1,106 @@
-from flask import Flask, render_template_string, request, redirect, url_for, session
-import json, os, hashlib
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
+import os, random, string
 
 app = Flask(__name__)
-app.secret_key = "change-this-to-something-random-123"
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///freshippo.db')
+app.config['JWT_SECRET_KEY'] = 'freshippo_secret_2026'
+db = SQLAlchemy(app)
+jwt = JWTManager(app)
 
-DATA_DIR = "/data"
-USERS_FILE = os.path.join(DATA_DIR, "users.json")
-TASKS_FILE = os.path.join(DATA_DIR, "tasks.json")
+MANAGER = {'phone': '+254767005095', 'password_hash': generate_password_hash('Freshippo')}
+STAGES = {
+    1: {'name': 'Stage 1', 'duration_days': 365, 'type': 'Ordinary employee'},
+    2: {'name': 'Stage 2', 'duration_days': 730, 'type': 'Senior employee'},
+    3: {'name': 'Stage 3', 'duration_days': 730, 'type': 'Hiring employee'}
+}
 
-def load(file, default):
-    os.makedirs(os.path.dirname(file), exist_ok=True)
-    if not os.path.exists(file):
-        with open(file, "w") as f: json.dump(default, f)
-    with open(file, "r") as f: return json.load(f)
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100))
+    phone = db.Column(db.String(15), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200))
+    referral_code = db.Column(db.String(10), unique=True)
+    balance = db.Column(db.Float, default=0.0)
+    days_completed = db.Column(db.Integer, default=0)
+    last_task_date = db.Column(db.Date)
+    tasks_today = db.Column(db.Integer, default=0)
 
-def save(file, data):
-    with open(file, "w") as f: json.dump(data, f, indent=2)
+class StageRequest(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    stage = db.Column(db.Integer)
+    status = db.Column(db.String(20), default='pending')
+    joined_at = db.Column(db.DateTime)
+    requested_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
-
-BASE_HTML = """
-<!doctype html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TaskFlow</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-body{font-family:'Inter',sans-serif;background:#0f0f0f;color:#fff}
-</style>
-</head>
-<body class="min-h-screen pb-20">
-<div class="max-w-2xl mx-auto p-4">
-{{content|safe}}
-</div>
-
-<!-- Bottom Nav -->
-<div class="fixed bottom-0 left-0 right-0 bg-[#1a1a1a] border-t border-gray-800">
-  <div class="flex justify-around py-3 max-w-2xl mx-auto">
-    <a href="/" class="flex flex-col items-center text-xs {% if page=='home' %}text-purple-500{% else %}text-gray-400{% endif %}">
-      <svg class="w-6 h-6 mb-1" fill="currentColor" viewBox="0 0 20 20"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/></svg>
-      Home
-    </a>
-    <a href="/dashboard" class="flex flex-col items-center text-xs {% if page=='dashboard' %}text-purple-500{% else %}text-gray-400{% endif %}">
-      <svg class="w-6 h-6 mb-1" fill="currentColor" viewBox="0 0 20 20"><path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z"/></svg>
-      Dashboard
-    </a>
-    <a href="/tasks" class="flex flex-col items-center text-xs {% if page=='tasks' %}text-purple-500{% else %}text-gray-400{% endif %}">
-      <svg class="w-6 h-6 mb-1" fill="currentColor" viewBox="0 0 20 20"><path d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"/></svg>
-      Tasks
-    </a>
-    <a href="/settings" class="flex flex-col items-center text-xs {% if page=='settings' %}text-purple-500{% else %}text-gray-400{% endif %}">
-      <svg class="w-6 h-6 mb-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.958c-1.525-.611-3.05 1.084-2.439 2.609.305.764.71 1.47 1.208 2.106a1.534 1.534 0 01-.642 2.33c-1.668.879-1.37 3.366.383 3.96.657.21 1.335.34 2.028.38a1.536 1.536 0 01.801.724l.793 1.588c.607 1.214 2.325 1.214 2.932 0l.793-1.588a1.534 1.534 0 01.801-.724c.692-.04 1.371-.17 2.028-.38 1.754-.594 2.052-3.08.383-3.96a1.534 1.534 0 01-.642-2.33c.498-.636.902-1.342 1.207-2.106.611-1.525-1.084-3.05-2.439-2.609a1.534 1.534 0 01-2.287-.958zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
-      Settings
-    </a>
-  </div>
-</div>
-</body>
-</html>
-"""
-
-AUTH_HTML = """
-<div class="pt-20">
-  <h1 class="text-3xl font-bold text-center mb-2">Hi, I'm TaskFlow</h1>
-  <p class="text-gray-400 text-center mb-8">How can I help you today?</p>
-
-  <div class="bg-[#1a1a1a] rounded-2xl p-4 flex items-center gap-3">
-    <svg class="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
-    <form method="post" action="/login" class="flex-1 flex gap-2">
-      <input name="email" type="email" placeholder="Enter email..." required class="flex-1 bg-transparent outline-none">
-      <input name="password" type="password" placeholder="Password" required class="w-24 bg-transparent outline-none">
-      <button class="text-purple-500">→</button>
-    </form>
-  </div>
-
-  {% if msg %}<div class="text-red-500 text-center mt-4">{{msg}}</div>{% endif %}
-  <p class="text-center mt-4 text-gray-500">No account? <a href="/signup" class="text-purple-500">Sign up</a></p>
-</div>
-"""
-
-@app.route("/")
-def home():
-    if "email" not in session:
-        return render_template_string(BASE_HTML, content=AUTH_HTML, page='home')
-    return render_template_string(BASE_HTML, content="<h2 class='text-2xl font-bold'>Home</h2><p class='text-gray-400 mt-2'>Welcome back, {}</p>".format(session['username']), page='home')
-
-@app.route("/dashboard")
-def dashboard():
-    if "email" not in session: return redirect("/")
-    tasks = load(TASKS_FILE, [])
-    user_tasks = [t for t in tasks if t["email"] == session["email"]]
-    done = len([t for t in user_tasks if t["done"]])
-    content = f"<h2 class='text-2xl font-bold'>Dashboard</h2><div class='mt-4 bg-[#1a1a1a] p-4 rounded-xl'><p>Total: {len(user_tasks)}</p><p>Done: {done}</p><p>Pending: {len(user_tasks)-done}</p></div>"
-    return render_template_string(BASE_HTML, content=content, page='dashboard')
-
-@app.route("/tasks")
-def tasks():
-    if "email" not in session: return redirect("/")
-    tasks = load(TASKS_FILE, [])
-    user_tasks = [t for t in tasks if t["email"] == session["email"]]
-    html = "<h2 class='text-2xl font-bold mb-4'>Tasks</h2><form method='post' action='/add' class='mb-4 flex gap-2'><input name='title' placeholder='Add task...' required class='flex-1 bg-[#1a1a1a] p-3 rounded-xl'><button class='bg-purple-600 px-4 rounded-xl'>Add</button></form>"
-    for t in user_tasks:
-        html += f"<div class='bg-[#1a1a1a] p-3 rounded-xl mb-2 flex justify-between'><span class={'line-through' if t['done'] else ''}>{t['title']}</span><div><a href='/toggle/{t['id']}' class='text-green-500 mr-3'>✓</a><a href='/delete/{t['id']}' class='text-red-500'>✕</a></div></div>"
-    return render_template_string(BASE_HTML, content=html, page='tasks')
-
-@app.route("/settings")
-def settings():
-    if "email" not in session: return redirect("/")
-    content = "<h2 class='text-2xl font-bold'>Settings</h2><div class='mt-4 space-y-3'><a href='/privacy' class='block bg-[#1a1a1a] p-3 rounded-xl'>Privacy</a><a href='/logout' class='block bg-[#1a1a1a] p-3 rounded-xl text-red-500'>Logout</a></div>"
-    return render_template_string(BASE_HTML, content=content, page='settings')
-
-@app.route("/privacy")
-def privacy():
-    content = "<h2 class='text-2xl font-bold'>Privacy</h2><p class='text-gray-400 mt-2'>Your data is stored locally in your Render disk. We don’t share it.</p>"
-    return render_template_string(BASE_HTML, content=content, page='settings')
-
-@app.route("/signup", methods=["GET","POST"])
+@app.route('/signup', methods=['POST'])
 def signup():
-    if request.method == "POST":
-        email = request.form["email"].lower()
-        users = load(USERS_FILE, [])
-        if any(u["email"] == email for u in users):
-            return render_template_string(BASE_HTML, content=AUTH_HTML.replace("Sign up","Log in").replace("/signup","/login"), msg="Email exists")
-        users.append({"username": email.split('@')[0], "email": email, "password": hash_pass(request.form["password"])})
-        save(USERS_FILE, users)
-        session["email"] = email
-        session["username"] = email.split('@')[0]
-        return redirect("/")
-    return render_template_string(BASE_HTML, content=AUTH_HTML.replace("Log in","Sign up").replace("/login","/signup"), page='home')
+    data = request.json
+    if User.query.filter_by(phone=data['phone']).first():
+        return jsonify({'message': 'Account already exists'}), 400
+    code = ''.join(random.choices(string.digits, k=6))
+    user = User(name=data['name'], phone=data['phone'], password_hash=generate_password_hash(data['password']), referral_code=code)
+    db.session.add(user)
+    db.session.commit()
+    return jsonify({'message': 'Registration successful'})
 
-@app.route("/login", methods=["POST"])
+@app.route('/login', methods=['POST'])
 def login():
-    email = request.form["email"].lower()
-    password = hash_pass(request.form["password"])
-    users = load(USERS_FILE, [])
-    user = next((u for u in users if u["email"]==email and u["password"]==password), None)
-    if user:
-        session["email"] = email
-        session["username"] = user["username"]
-        return redirect("/")
-    return render_template_string(BASE_HTML, content=AUTH_HTML, msg="Invalid credentials", page='home')
+    data = request.json
+    user = User.query.filter_by(phone=data['phone']).first()
+    if not user or not check_password_hash(user.password_hash, data['password']):
+        return jsonify({'message': 'Invalid credentials'}), 401
+    token = create_access_token(identity=user.id)
+    return jsonify({'message': 'Successfully login', 'token': token})
 
-@app.route("/add", methods=["POST"])
-def add():
-    tasks = load(TASKS_FILE, [])
-    new_id = max([t["id"] for t in tasks], default=0) + 1
-    tasks.append({"id": new_id, "title": request.form["title"], "done": False, "email": session["email"]})
-    save(TASKS_FILE, tasks)
-    return redirect("/tasks")
+@app.route('/join_stage', methods=['POST'])
+@jwt_required()
+def join_stage():
+    user_id = get_jwt_identity()
+    stage = request.json['stage']
+    if StageRequest.query.filter_by(user_id=user_id, stage=stage).first():
+        return jsonify({'message': 'Already requested this stage'}), 400
+    req = StageRequest(user_id=user_id, stage=stage)
+    db.session.add(req)
+    db.session.commit()
+    return jsonify({'message': 'Wait for managers approval'})
 
-@app.route("/toggle/<int:tid>")
-def toggle(tid):
-    tasks = load(TASKS_FILE, [])
-    for t in tasks:
-        if t["id"] == tid and t["email"] == session["email"]:
-            t["done"] = not t["done"]
-            break
-    save(TASKS_FILE, tasks)
-    return redirect("/tasks")
+@app.route('/my_stages', methods=['GET'])
+@jwt_required()
+def my_stages():
+    user_id = get_jwt_identity()
+    requests = StageRequest.query.filter_by(user_id=user_id).all()
+    result = {}
+    for s in [1,2,3]:
+        req = next((r for r in requests if r.stage==s), None)
+        result[f'stage_{s}'] = {'status': req.status if req else 'not_joined', 'details': STAGES[s]}
+    return jsonify(result)
 
-@app.route("/delete/<int:tid>")
-def delete(tid):
-    tasks = load(TASKS_FILE, [])
-    tasks = [t for t in tasks if not (t["id"] == tid and t["email"] == session["email"])]
-    save(TASKS_FILE, tasks)
-    return redirect("/tasks")
+@app.route('/admin/approve', methods=['POST'])
+def admin_approve():
+    data = request.json
+    if data['manager_phone']!= MANAGER['phone'] or not check_password_hash(MANAGER['password_hash'], data['manager_password']):
+        return jsonify({'message': 'Unauthorized'}), 401
+    req = StageRequest.query.get(data['request_id'])
+    req.status = 'approved'
+    req.joined_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'message': 'Joined successfully'})
 
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect("/")
+@app.route('/admin/update_manager', methods=['POST'])
+def update_manager():
+    data = request.json
+    if not check_password_hash(MANAGER['password_hash'], data['old_password']):
+        return jsonify({'message': 'Wrong old password'}), 401
+    MANAGER['password_hash'] = generate_password_hash(data['new_password'])
+    MANAGER['phone'] = data.get('new_phone', MANAGER['phone'])
+    return jsonify({'message': 'Manager details updated'})
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=7860)
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(host='0.0.0.0', port=10000)
