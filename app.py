@@ -7,8 +7,16 @@ import os, random, string
 
 app = Flask(__name__)
 
-# FIX 1: Use DATABASE_URL from Render, no sqlite fallback
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+# FIX 1: Crash-proof DATABASE_URL. Render uses postgres:// but SQLAlchemy needs postgresql://
+db_url = os.getenv('DATABASE_URL', '')
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+if not db_url:
+    raise ValueError("DATABASE_URL environment variable is not set")
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'freshippo_secret_2026')
 
 db = SQLAlchemy(app)
@@ -40,7 +48,7 @@ class StageRequest(db.Model):
     joined_at = db.Column(db.DateTime)
     requested_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# FIX 2: Add root route for Render health check
+# FIX 2: Root route so Render health check passes
 @app.route('/')
 def health():
     return jsonify({"status": "Freshippo API running", "endpoints": ["/signup", "/login", "/join_stage", "/my_stages"]})
@@ -48,6 +56,8 @@ def health():
 @app.route('/signup', methods=['POST'])
 def signup():
     data = request.json
+    if not data or not data.get('phone') or not data.get('password') or not data.get('name'):
+        return jsonify({'message': 'Missing fields'}), 400
     if User.query.filter_by(phone=data['phone']).first():
         return jsonify({'message': 'Account already exists'}), 400
     code = ''.join(random.choices(string.digits, k=6))
@@ -59,6 +69,8 @@ def signup():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
+    if not data or not data.get('phone') or not data.get('password'):
+        return jsonify({'message': 'Missing credentials'}), 400
     user = User.query.filter_by(phone=data['phone']).first()
     if not user or not check_password_hash(user.password_hash, data['password']):
         return jsonify({'message': 'Invalid credentials'}), 401
@@ -69,13 +81,15 @@ def login():
 @jwt_required()
 def join_stage():
     user_id = get_jwt_identity()
-    stage = request.json['stage']
+    stage = request.json.get('stage')
+    if stage not in [1,2,3]:
+        return jsonify({'message': 'Invalid stage'}), 400
     if StageRequest.query.filter_by(user_id=user_id, stage=stage).first():
         return jsonify({'message': 'Already requested this stage'}), 400
     req = StageRequest(user_id=user_id, stage=stage)
     db.session.add(req)
     db.session.commit()
-    return jsonify({'message': 'Wait for managers approval'})
+    return jsonify({'message': 'Wait for manager approval'})
 
 @app.route('/my_stages', methods=['GET'])
 @jwt_required()
@@ -91,9 +105,11 @@ def my_stages():
 @app.route('/admin/approve', methods=['POST'])
 def admin_approve():
     data = request.json
-    if data['manager_phone']!= MANAGER['phone'] or not check_password_hash(MANAGER['password_hash'], data['manager_password']):
+    if not data or data.get('manager_phone')!= MANAGER['phone'] or not check_password_hash(MANAGER['password_hash'], data.get('manager_password','')):
         return jsonify({'message': 'Unauthorized'}), 401
-    req = StageRequest.query.get(data['request_id'])
+    req = StageRequest.query.get(data.get('request_id'))
+    if not req:
+        return jsonify({'message': 'Request not found'}), 404
     req.status = 'approved'
     req.joined_at = datetime.utcnow()
     db.session.commit()
@@ -102,15 +118,7 @@ def admin_approve():
 @app.route('/admin/update_manager', methods=['POST'])
 def update_manager():
     data = request.json
-    if not check_password_hash(MANAGER['password_hash'], data['old_password']):
+    if not check_password_hash(MANAGER['password_hash'], data.get('old_password','')):
         return jsonify({'message': 'Wrong old password'}), 401
-    MANAGER['password_hash'] = generate_password_hash(data['new_password'])
+    MANAGER['password_hash'] = generate_password_hash(data.get('new_password',''))
     MANAGER['phone'] = data.get('new_phone', MANAGER['phone'])
-    return jsonify({'message': 'Manager details updated'})
-
-# FIX 3: Use $PORT env var for local testing
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
