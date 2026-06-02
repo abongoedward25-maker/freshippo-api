@@ -6,8 +6,11 @@ from datetime import datetime
 import os, random, string
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///freshippo.db')
-app.config['JWT_SECRET_KEY'] = 'freshippo_secret_2026'
+
+# FIX 1: Use DATABASE_URL from Render, no sqlite fallback
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'freshippo_secret_2026')
+
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
@@ -36,6 +39,11 @@ class StageRequest(db.Model):
     status = db.Column(db.String(20), default='pending')
     joined_at = db.Column(db.DateTime)
     requested_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+# FIX 2: Add root route for Render health check
+@app.route('/')
+def health():
+    return jsonify({"status": "Freshippo API running", "endpoints": ["/signup", "/login", "/join_stage", "/my_stages"]})
 
 @app.route('/signup', methods=['POST'])
 def signup():
@@ -100,7 +108,9 @@ def update_manager():
     MANAGER['phone'] = data.get('new_phone', MANAGER['phone'])
     return jsonify({'message': 'Manager details updated'})
 
+# FIX 3: Use $PORT env var for local testing
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    app.run(host='0.0.0.0', port=10000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
