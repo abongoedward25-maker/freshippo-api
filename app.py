@@ -7,13 +7,12 @@ import os, random, string
 
 app = Flask(__name__)
 
-# FIX 1: Crash-proof DATABASE_URL. Render uses postgres:// but SQLAlchemy needs postgresql://
+# FIX 1: psycopg3 URL format + crash-proof DATABASE_URL
 db_url = os.getenv('DATABASE_URL', '')
 if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
-
-if not db_url:
-    raise ValueError("DATABASE_URL environment variable is not set")
+    db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
+elif db_url.startswith("postgresql://") and "+psycopg" not in db_url:
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -22,11 +21,10 @@ app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'freshippo_secret_202
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
-MANAGER = {'phone': '+254767005095', 'password_hash': generate_password_hash('Freshippo')}
 STAGES = {
-    1: {'name': 'Stage 1', 'duration_days': 365, 'type': 'Ordinary employee'},
-    2: {'name': 'Stage 2', 'duration_days': 730, 'type': 'Senior employee'},
-    3: {'name': 'Stage 3', 'duration_days': 730, 'type': 'Hiring employee'}
+    1: {'name': 'Stage 1', 'days': 365, 'price': 99},
+    2: {'name': 'Stage 2', 'days': 730, 'price': 199},
+    3: {'name': 'Stage 3', 'days': 1095, 'price': 299}
 }
 
 class User(db.Model):
@@ -35,90 +33,150 @@ class User(db.Model):
     phone = db.Column(db.String(15), unique=True, nullable=False)
     password_hash = db.Column(db.String(200))
     referral_code = db.Column(db.String(10), unique=True)
+    referred_by = db.Column(db.String(10))
     balance = db.Column(db.Float, default=0.0)
-    days_completed = db.Column(db.Integer, default=0)
-    last_task_date = db.Column(db.Date)
-    tasks_today = db.Column(db.Integer, default=0)
+    current_stage = db.Column(db.Integer, default=1)
+    stage_start_date = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-class StageRequest(db.Model):
+class Task(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    stage = db.Column(db.Integer)
-    status = db.Column(db.String(20), default='pending')
-    joined_at = db.Column(db.DateTime)
-    requested_at = db.Column(db.DateTime, default=datetime.utcnow)
+    date = db.Column(db.Date, default=datetime.utcnow().date)
+    completed = db.Column(db.Boolean, default=False)
 
-# FIX 2: Root route so Render health check passes
+class Withdrawal(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    amount = db.Column(db.Float)
+    status = db.Column(db.String(20), default='pending')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+def generate_ref_code():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
 @app.route('/')
 def health():
-    return jsonify({"status": "Freshippo API running", "endpoints": ["/signup", "/login", "/join_stage", "/my_stages"]})
+    return jsonify({"status": "Freshippo API running", "version": "2.0"})
 
 @app.route('/signup', methods=['POST'])
 def signup():
-    data = request.json
+    data = request.get_json()
     if not data or not data.get('phone') or not data.get('password') or not data.get('name'):
         return jsonify({'message': 'Missing fields'}), 400
+
     if User.query.filter_by(phone=data['phone']).first():
-        return jsonify({'message': 'Account already exists'}), 400
-    code = ''.join(random.choices(string.digits, k=6))
-    user = User(name=data['name'], phone=data['phone'], password_hash=generate_password_hash(data['password']), referral_code=code)
+        return jsonify({'message': 'Phone already exists'}), 400
+
+    ref_code = generate_ref_code()
+    user = User(
+        name=data['name'],
+        phone=data['phone'],
+        password_hash=generate_password_hash(data['password']),
+        referral_code=ref_code,
+        referred_by=data.get('referral_code')
+    )
     db.session.add(user)
     db.session.commit()
-    return jsonify({'message': 'Registration successful'})
+
+    # Referral bonus
+    if data.get('referral_code'):
+        ref_user = User.query.filter_by(referral_code=data['referral_code']).first()
+        if ref_user:
+            ref_user.balance += 10
+
+    token = create_access_token(identity=user.id)
+    return jsonify({'message': 'User created', 'token': token, 'referral_code': ref_code})
 
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.json
-    if not data or not data.get('phone') or not data.get('password'):
-        return jsonify({'message': 'Missing credentials'}), 400
-    user = User.query.filter_by(phone=data['phone']).first()
-    if not user or not check_password_hash(user.password_hash, data['password']):
-        return jsonify({'message': 'Invalid credentials'}), 401
-    token = create_access_token(identity=user.id)
-    return jsonify({'message': 'Successfully login', 'token': token})
+    data = request.get_json()
+    user = User.query.filter_by(phone=data.get('phone')).first()
+    if user and check_password_hash(user.password_hash, data.get('password')):
+        token = create_access_token(identity=user.id)
+        return jsonify({'token': token})
+    return jsonify({'message': 'Invalid credentials'}), 401
 
-@app.route('/join_stage', methods=['POST'])
+@app.route('/dashboard', methods=['GET'])
 @jwt_required()
-def join_stage():
+def dashboard():
     user_id = get_jwt_identity()
-    stage = request.json.get('stage')
-    if stage not in [1,2,3]:
+    user = User.query.get(user_id)
+    stage_info = STAGES[user.current_stage]
+    days_left = (user.stage_start_date + timedelta(days=stage_info['days']) - datetime.utcnow()).days
+    tasks_today = Task.query.filter_by(user_id=user_id, date=datetime.utcnow().date()).count()
+
+    return jsonify({
+        'name': user.name,
+        'phone': user.phone,
+        'balance': user.balance,
+        'stage': stage_info['name'],
+        'days_left': max(0, days_left),
+        'tasks_completed_today': tasks_today,
+        'referral_code': user.referral_code
+    })
+
+@app.route('/complete_task', methods=['POST'])
+@jwt_required()
+def complete_task():
+    user_id = get_jwt_identity()
+    today = datetime.utcnow().date()
+    if Task.query.filter_by(user_id=user_id, date=today).first():
+        return jsonify({'message': 'Task already completed today'}), 400
+
+    task = Task(user_id=user_id)
+    user = User.query.get(user_id)
+    user.balance += 5
+    db.session.add(task)
+    db.session.commit()
+    return jsonify({'message': 'Task completed', 'earned': 5, 'new_balance': user.balance})
+
+@app.route('/upgrade_stage', methods=['POST'])
+@jwt_required()
+def upgrade_stage():
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    new_stage = data.get('stage')
+
+    if new_stage not in [2, 3]:
         return jsonify({'message': 'Invalid stage'}), 400
-    if StageRequest.query.filter_by(user_id=user_id, stage=stage).first():
-        return jsonify({'message': 'Already requested this stage'}), 400
-    req = StageRequest(user_id=user_id, stage=stage)
-    db.session.add(req)
-    db.session.commit()
-    return jsonify({'message': 'Wait for manager approval'})
 
-@app.route('/my_stages', methods=['GET'])
+    user = User.query.get(user_id)
+    if user.current_stage >= new_stage:
+        return jsonify({'message': 'Already at this stage or higher'}), 400
+
+    price = STAGES[new_stage]['price']
+    if user.balance < price:
+        return jsonify({'message': 'Insufficient balance'}), 400
+
+    user.balance -= price
+    user.current_stage = new_stage
+    user.stage_start_date = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'message': f'Upgraded to Stage {new_stage}', 'new_balance': user.balance})
+
+@app.route('/withdraw', methods=['POST'])
 @jwt_required()
-def my_stages():
+def withdraw():
     user_id = get_jwt_identity()
-    requests = StageRequest.query.filter_by(user_id=user_id).all()
-    result = {}
-    for s in [1,2,3]:
-        req = next((r for r in requests if r.stage==s), None)
-        result[f'stage_{s}'] = {'status': req.status if req else 'not_joined', 'details': STAGES[s]}
-    return jsonify(result)
+    data = request.get_json()
+    amount = float(data.get('amount', 0))
 
-@app.route('/admin/approve', methods=['POST'])
-def admin_approve():
-    data = request.json
-    if not data or data.get('manager_phone')!= MANAGER['phone'] or not check_password_hash(MANAGER['password_hash'], data.get('manager_password','')):
-        return jsonify({'message': 'Unauthorized'}), 401
-    req = StageRequest.query.get(data.get('request_id'))
-    if not req:
-        return jsonify({'message': 'Request not found'}), 404
-    req.status = 'approved'
-    req.joined_at = datetime.utcnow()
+    user = User.query.get(user_id)
+    if amount < 50:
+        return jsonify({'message': 'Minimum withdrawal is $50'}), 400
+    if user.balance < amount:
+        return jsonify({'message': 'Insufficient balance'}), 400
+
+    user.balance -= amount
+    withdrawal = Withdrawal(user_id=user_id, amount=amount)
+    db.session.add(withdrawal)
     db.session.commit()
-    return jsonify({'message': 'Joined successfully'})
+    return jsonify({'message': 'Withdrawal request submitted', 'amount': amount})
 
-@app.route('/admin/update_manager', methods=['POST'])
-def update_manager():
-    data = request.json
-    if not check_password_hash(MANAGER['password_hash'], data.get('old_password','')):
-        return jsonify({'message': 'Wrong old password'}), 401
-    MANAGER['password_hash'] = generate_password_hash(data.get('new_password',''))
-    MANAGER['phone'] = data.get('new_phone', MANAGER['phone'])
+# FIX 2: Don't run db.create_all() on import - Render will timeout
+# Run it once manually via Render Shell instead
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
