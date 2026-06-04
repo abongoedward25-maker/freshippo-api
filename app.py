@@ -38,14 +38,14 @@ def signup_page():
         password = request.form.get('password')
         name = request.form.get('name')
         try:
-            with app.test_request_context('/register', method='POST', json={'email': email, 'password': password, 'name': name}):
-                result = register_user()
+            with app.test_request_context('/auth/register', method='POST', json={'email': email, 'password': password, 'name': name}):
+                result = register()
                 data = result.get_json() if hasattr(result, 'get_json') else {}
         except Exception as e:
             return f"Error: {e} <br><a href='/signup'>Back</a>"
         if data and 'access_token' in data:
-            return f"<h1>Account Created</h1><p>Welcome {name}</p><a href='/loginpage'>Sign In</a>"
-        return f"Error: {data.get('error', 'Failed')} <br><a href='/signup'>Try again</a>"
+            return f"<h1>✅ Account Created</h1><p>Welcome {name}</p><a href='/loginpage'>Sign In</a>"
+        return f"Error: {data.get('msg', 'Failed')} <br><a href='/signup'>Try again</a>"
     return "<h2>Sign Up</h2><form method='POST'><input name='name' placeholder='Name' required><br><input name='email' type='email' placeholder='Email' required><br><input name='password' type='password' placeholder='Password' required><br><button>Sign Up</button></form>"
 
 @app.route('/loginpage', methods=['GET', 'POST'])
@@ -54,16 +54,15 @@ def login_page():
         email = request.form.get('email')
         password = request.form.get('password')
         try:
-            with app.test_request_context('/login', method='POST', json={'email': email, 'password': password}):
-                result = login_user()
+            with app.test_request_context('/auth/login', method='POST', json={'email': email, 'password': password}):
+                result = login()
                 data = result.get_json() if hasattr(result, 'get_json') else {}
         except Exception as e:
             return f"Error: {e} <br><a href='/loginpage'>Back</a>"
         if data and 'access_token' in data:
-            return "<h1>Welcome Back</h1>"
-        return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
+            return "<h1>✅ Welcome Back</h1>"
+        return f"Error: {data.get('msg', 'Wrong credentials')} <br><a href='/loginpage'>Try again</a>"
     return "<h2>Login</h2><form method='POST'><input name='email' type='email' placeholder='Email' required><br><input name='password' type='password' placeholder='Password' required><br><button>Sign In</button></form>"
-    
 # === RENDER + PYTHON 3.14 + PSYCOPG3 FIX ===
 db_url = os.getenv('DATABASE_URL', '')
 if db_url.startswith("postgres://"):
