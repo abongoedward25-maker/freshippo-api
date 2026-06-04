@@ -225,4 +225,4 @@ def login_page():
         return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
     return "<h2>Login</h2><form method='POST'><input name='email' type='email' required placeholder='Email'><br><input name='password' type='password' required placeholder='Password'><br><button>Sign In</button></form>"
 
-@
+
