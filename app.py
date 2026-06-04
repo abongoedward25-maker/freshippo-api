@@ -194,26 +194,19 @@ def signup_page():
     
     return "<h2>Sign Up</h2><form method='POST'><input name='name' placeholder='Name' required><br><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign Up</button></form>"
 
-@app.route('/loginpage', methods=['GET', 'POST'])
-def login_page():
-    if request.method == 'POST':
-        email = request.form.get('email')
-        password = request.form.get('password')
-        user = User.query.filter_by(email=email).first()
-        if user and check_password_hash(user.password_hash, password):
-            token = create_access_token(identity=str(user.id))
-            return f'<h1>Welcome Back!</h1><p><a href="/dashboard?token={token}">Go to Dashboard</a></p>'  
-        return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
-    return "<h2>Login</h2><form method='POST'><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign In</button></form>"
-    
+if user and check_password_hash(user.password_hash, password):
+    token = create_access_token(identity=str(user.id))
+    resp = make_response(f'<h1>Welcome Back!</h1><p><a href="/dashboard">Go to Dashboard</a></p>')
+    resp.set_cookie('access_token', token, httponly=True)
+    return resp
+
 @app.route('/dashboard')
 def dashboard():
-    token = request.args.get('token')
+    token = request.cookies.get('access_token')
     if not token:
         return '<h1>Please login first</h1><a href="/loginpage">Login</a>'
     
     try:
-        # Verify token manually
         from flask_jwt_extended import decode_token
         decoded = decode_token(token)
         user_id = decoded['sub']
@@ -235,16 +228,10 @@ def dashboard():
         html += "<p>No products yet. Add some!</p>"
     else:
         for p in products:
-            html += f"""
-            <div style="border:1px solid #ddd; padding:10px; margin:10px 0; border-radius:8px">
-            <h3>{p.name}</h3>
-            <p>{p.description}</p>
-            <p><b>Price:</b> ${p.price} | <b>Stock:</b> {p.stock}</p>
-            </div>
-            """
+            html += f"<div style='border:1px solid #ddd; padding:10px; margin:10px 0'><h3>{p.name}</h3><p>${p.price} | Stock: {p.stock}</p></div>"
     
     if user.is_admin:
-        html += f'<p><a href="/add-product?token={token}">+ Add New Product</a></p>'
+        html += '<p><a href="/add-product">+ Add New Product</a></p>'
     
-    html += f'<p><a href="/loginpage">Logout</a></p></body></html>'
+    html += '<p><a href="/loginpage">Logout</a></p></body></html>'
     return html
