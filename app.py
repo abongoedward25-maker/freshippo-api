@@ -13,6 +13,23 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+@app.route('/')
+def home():
+    html = """
+    <html>
+        <head><title>Freshippo API</title></head>
+        <body style="font-family:Arial; text-align:center; padding:50px">
+            <h1>🛒 Freshippo API</h1>
+            <p>Status: <b style="color:green">LIVE</b></p>
+            <h3>Available Endpoints:</h3>
+            <p>GET /health</p>
+            <p>POST /register</p>
+            <p>POST /login</p>
+            <p>GET /products</p>
+        </body>
+    </html>
+    """
+    return html
 
 # === RENDER + PYTHON 3.14 + PSYCOPG3 FIX ===
 db_url = os.getenv('DATABASE_URL', '')
