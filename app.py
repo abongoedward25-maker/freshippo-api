@@ -1,7 +1,7 @@
+from flask import Flask, request, jsonify, make_response
 import os
-from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from flask_jwt_extended import JWTManager, create_access_token, decode_token
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
@@ -141,14 +141,19 @@ def register():
     token = create_access_token(identity=str(user.id))
     return jsonify({"access_token": token, "user": user.to_dict()}), 201
 
-@app.route('/auth/login', methods=['POST'])
-def login():
-    data = request.get_json()
-    user = User.query.filter_by(email=data.get('email')).first()
-    if user and check_password_hash(user.password_hash, data.get('password')):
-        token = create_access_token(identity=str(user.id))
-        return jsonify({"access_token": token, "user": user.to_dict()}), 200
-    return jsonify({"msg": "Invalid credentials"}), 401
+@app.route('/loginpage', methods=['GET', 'POST'])
+def login_page():  # <-- 0 spaces
+    if request.method == 'POST':  # <-- 4 spaces
+        email = request.form.get('email')  # <-- 8 spaces
+        password = request.form.get('password')
+        user = User.query.filter_by(email=email).first()
+        if user and check_password_hash(user.password_hash, password):
+            token = create_access_token(identity=str(user.id))
+            resp = make_response(f'<h1>Welcome Back!</h1><p><a href="/dashboard">Go to Dashboard</a></p>')  # <-- 12 spaces
+            resp.set_cookie('access_token', token, httponly=True)  # <-- 12 spaces
+            return resp  # <-- 12 spaces - THIS MUST BE INSIDE the if block
+        return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"  # <-- 8 spaces
+    return "<h2>Login</h2>...form..."  # <-- 4 spaces
 
 # PRODUCTS - YOU ADD THESE
 @app.route('/products', methods=['POST'])
