@@ -134,16 +134,6 @@ def login():
     return jsonify({"msg": "Invalid credentials"}), 401
 
 # PRODUCTS - YOU ADD THESE
-@app.route('/products', methods=['GET'])
-def get_products():
-    products = Product.query.all()
-    return jsonify([p.to_dict() for p in products]), 200
-
-@app.route('/products/<int:product_id>', methods=['GET'])
-def get_product(product_id):
-    product = Product.query.get_or_404(product_id)
-    return jsonify(product.to_dict()), 200
-
 @app.route('/products', methods=['POST'])
 @admin_required
 def add_product():
@@ -154,4 +144,12 @@ def add_product():
             description=data.get('description', ''),
             price=Decimal(str(data['price'])),
             stock=data.get('stock', 0),
-            category=data
+            category=data.get('category', 'General'),
+            image_url=data.get('image_url', '')
+        )
+        db.session.add(product)
+        db.session.commit()
+        return jsonify({"msg": "Product added", "product": product.to_dict()}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
