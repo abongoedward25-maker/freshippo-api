@@ -30,7 +30,7 @@ def homepage():  # changed from home to homepage
     </html>
     """
     return html
-    from flask import request, jsonify, render_template_string
+    import requests
 
 @app.route('/signup', methods=['GET', 'POST'])
 def signup_page():
@@ -39,40 +39,18 @@ def signup_page():
         password = request.form['password'] 
         name = request.form['name']
         
-        # Call your existing /register route logic
-        with app.test_request_context('/register', method='POST', json={
-            'email': email, 
-            'password': password, 
-            'name': name
-        }):
-            result = register()  # 'register' is your function name for @app.route('/register')
-            data = result.get_json() if hasattr(result, 'get_json') else result
-            
+        # Call your own API directly
+        resp = requests.post('http://localhost:10000/register', json={
+            'email': email, 'password': password, 'name': name
+        })
+        data = resp.json()
+        
         if 'access_token' in data:
-            return render_template_string("""
-            <html><body style="font-family:Arial; text-align:center; padding:50px">
-            <h1>✅ Account Created!</h1>
-            <p>Welcome {{name}}</p>
-            <p>Your account is ready. Now sign in 👇</p>
-            <a href="/loginpage" style="padding:10px 20px; background:green; color:white; text-decoration:none">Sign In</a>
-            </body></html>
-            """, name=name)
+            return f"<h1>✅ Success!</h1><p>Welcome {name}</p><a href='/loginpage'>Sign In</a>"
         else:
-            return f"Error: {data.get('error', 'Email already exists')} <br><a href='/signup'>Try again</a>"
+            return f"Error: {data.get('error')} <br><a href='/signup'>Back</a>"
     
-    return render_template_string("""
-    <html><body style="font-family:Arial; max-width:400px; margin:50px auto; padding:20px; border:1px solid #ddd; border-radius:10px">
-    <h2 style="text-align:center">🛒 Freshippo</h2>
-    <h3>Create Account</h3>
-    <form method="POST">
-        <p><input type="text" name="name" placeholder="Full Name" required style="width:100%; padding:10px; margin:5px 0"></p>
-        <p><input type="email" name="email" placeholder="Email" required style="width:100%; padding:10px; margin:5px 0"></p>
-        <p><input type="password" name="password" placeholder="Password" required style="width:100%; padding:10px; margin:5px 0"></p>
-        <p><button type="submit" style="width:100%; padding:12px; background:#28a745; color:white; border:none; border-radius:5px; font-size:16px">Sign Up</button></p>
-    </form>
-    <p style="text-align:center">Already have account? <a href="/loginpage">Sign In</a></p>
-    </body></html>
-    """)
+    return """<html>...your form HTML here...</html>"""
 
 @app.route('/loginpage', methods=['GET', 'POST'])
 def login_page():
@@ -80,38 +58,18 @@ def login_page():
         email = request.form['email']
         password = request.form['password']
         
-        # Call your existing /login route logic  
-        with app.test_request_context('/login', method='POST', json={
-            'email': email, 
-            'password': password
-        }):
-            result = login()  # 'login' is your function name for @app.route('/login')
-            data = result.get_json() if hasattr(result, 'get_json') else result
-            
+        resp = requests.post('http://localhost:10000/login', json={
+            'email': email, 'password': password
+        })
+        data = resp.json()
+        
         if 'access_token' in data:
-            return render_template_string("""
-            <html><body style="font-family:Arial; text-align:center; padding:50px">
-            <h1>✅ Welcome Back!</h1>
-            <p>You are logged in successfully</p>
-            <p style="color:gray; font-size:12px">Token: {{token[:40]}}...</p>
-            </body></html>
-            """, token=data['access_token'])
+            return f"<h1>✅ Welcome Back!</h1>"
         else:
-            return f"Error: Wrong email or password <br><a href='/loginpage'>Try again</a>"
+            return f"Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
     
-    return render_template_string("""
-    <html><body style="font-family:Arial; max-width:400px; margin:50px auto; padding:20px; border:1px solid #ddd; border-radius:10px">
-    <h2 style="text-align:center">🛒 Freshippo</h2>
-    <h3>Sign In</h3>
-    <form method="POST">
-        <p><input type="email" name="email" placeholder="Email" required style="width:100%; padding:10px; margin:5px 0"></p>
-        <p><input type="password" name="password" placeholder="Password" required style="width:100%; padding:10px; margin:5px 0"></p>
-        <p><button type="submit" style="width:100%; padding:12px; background:#007bff; color:white; border:none; border-radius:5px; font-size:16px">Sign In</button></p>
-    </form>
-    <p style="text-align:center">No account? <a href="/signup">Sign Up</a></p>
-    </body></html>
-    """)
-
+    return """<html>...your form HTML here...</html>"""
+    
 # === RENDER + PYTHON 3.14 + PSYCOPG3 FIX ===
 db_url = os.getenv('DATABASE_URL', '')
 if db_url.startswith("postgres://"):
