@@ -2,7 +2,6 @@ from flask_jwt_extended import JWTManager, create_access_token, decode_token, jw
 from flask import Flask, request, jsonify, make_response
 import os
 from flask_sqlalchemy import SQLAlchemy
-from flask_jwt_extended import JWTManager, create_access_token, decode_token
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
@@ -14,24 +13,7 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
-@app.route('/')
-def homepage():  # changed from home to homepage
-    html = """
-    <html>
-        <head><title>Freshippo API</title></head>
-        <body style="font-family:Arial; text-align:center; padding:50px">
-            <h1>🛒 Freshippo API</h1>
-            <p>Status: <b style="color:green">LIVE</b></p>
-            <h3>Available Endpoints:</h3>
-            <p>GET /health</p>
-            <p>POST /register</p>
-            <p>POST /login</p>
-            <p>GET /products</p>
-        </body>
-    </html>
-    """
-    return html 
-    
+
 # === RENDER + PYTHON 3.14 + PSYCOPG3 FIX ===
 db_url = os.getenv('DATABASE_URL', '')
 if db_url.startswith("postgres://"):
@@ -62,17 +44,6 @@ class User(db.Model):
     def to_dict(self):
         return {"id": self.id, "email": self.email, "name": self.name, "phone": self.phone, "is_admin": self.is_admin}
 
-def admin_required(fn):
-    @wraps(fn)
-    @jwt_required()  # <-- now Python knows what this is
-    def wrapper(*args, **kwargs):
-        user_id = get_jwt_identity()
-        user = User.query.get(user_id)
-        if not user or not user.is_admin:
-            return jsonify({"msg": "Admin access required"}), 403
-        return fn(*args, **kwargs)
-    return wrapper
-    
 class Product(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
@@ -110,25 +81,41 @@ class OrderItem(db.Model):
     quantity = db.Column(db.Integer, nullable=False)
     price = db.Column(db.Numeric(10, 2), nullable=False)
 
-# Admin check
+# === DECORATOR ===
 def admin_required(fn):
     @wraps(fn)
     @jwt_required()
     def wrapper(*args, **kwargs):
-        user = User.query.get(get_jwt_identity())
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
         if not user or not user.is_admin:
             return jsonify({"msg": "Admin required"}), 403
         return fn(*args, **kwargs)
     return wrapper
 
-# Create tables only, no seed data
+# Create tables
 with app.app_context():
     db.create_all()
 
 # === ROUTES ===
 @app.route('/')
-def home():
-    return jsonify({"status": "Freshippo API LIVE ✅", "products": "add via POST /products"})
+def homepage():
+    html = """
+    <html>
+        <head><title>Freshippo API</title></head>
+        <body style="font-family:Arial; text-align:center; padding:50px">
+            <h1>🛒 Freshippo API</h1>
+            <p>Status: <b style="color:green">LIVE</b></p>
+            <p><a href="/signup">Sign Up</a> | <a href="/loginpage">Login</a> | <a href="/dashboard">Dashboard</a></p>
+            <h3>API Endpoints:</h3>
+            <p>GET /health</p>
+            <p>POST /register</p>
+            <p>POST /login</p>
+            <p>GET /products</p>
+        </body>
+    </html>
+    """
+    return html 
 
 @app.route('/health')
 def health():
@@ -153,41 +140,6 @@ def register():
     token = create_access_token(identity=str(user.id))
     return jsonify({"access_token": token, "user": user.to_dict()}), 201
 
-@app.route('/loginpage', methods=['GET', 'POST'])
-def login_page():  # <-- 0 spaces
-    if request.method == 'POST':  # <-- 4 spaces
-        email = request.form.get('email')  # <-- 8 spaces
-        password = request.form.get('password')
-        user = User.query.filter_by(email=email).first()
-        if user and check_password_hash(user.password_hash, password):
-            token = create_access_token(identity=str(user.id))
-            resp = make_response(f'<h1>Welcome Back!</h1><p><a href="/dashboard">Go to Dashboard</a></p>')  # <-- 12 spaces
-            resp.set_cookie('access_token', token, httponly=True)  # <-- 12 spaces
-            return resp  # <-- 12 spaces - THIS MUST BE INSIDE the if block
-        return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"  # <-- 8 spaces
-    return "<h2>Login</h2>...form..."  # <-- 4 spaces
-
-# PRODUCTS - YOU ADD THESE
-@app.route('/products', methods=['POST'])
-@admin_required
-def add_product():
-    data = request.get_json()
-    try:
-        product = Product(
-            name=data['name'],
-            description=data.get('description', ''),
-            price=Decimal(str(data['price'])),
-            stock=data.get('stock', 0),
-            category=data.get('category', 'General'),
-            image_url=data.get('image_url', '')
-        )
-        db.session.add(product)
-        db.session.commit()
-        return jsonify({"msg": "Product added", "product": product.to_dict()}), 201
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": str(e)}), 500
-
 @app.route('/signup', methods=['GET', 'POST'])
 def signup_page():
     if request.method == 'POST':
@@ -203,7 +155,6 @@ def signup_page():
             user.password_hash = generate_password_hash(password)
             db.session.add(user)
             db.session.commit()
-            token = create_access_token(identity=str(user.id))
             return f"<h1>Account Created</h1><p>Welcome {name}</p><a href='/loginpage'>Sign In</a>"
         except Exception as e:
             db.session.rollback()
@@ -225,4 +176,58 @@ def login_page():
         return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
     return "<h2>Login</h2><form method='POST'><input name='email' type='email' required placeholder='Email'><br><input name='password' type='password' required placeholder='Password'><br><button>Sign In</button></form>"
 
+@app.route('/dashboard')
+def dashboard():
+    token = request.cookies.get('access_token')
+    if not token:
+        return '<h1>Please login first</h1><a href="/loginpage">Login</a>'
+    
+    try:
+        decoded = decode_token(token)
+        user_id = decoded['sub']
+        user = User.query.get(user_id)
+    except:
+        return '<h1>Invalid token</h1><a href="/loginpage">Login again</a>'
+    
+    products = Product.query.all()
+    
+    html = f"""
+    <html><body style="font-family:Arial; padding:20px; max-width:600px; margin:auto">
+    <h1>🛒 Welcome {user.name}!</h1>
+    <p>Email: {user.email} | Admin: {user.is_admin}</p>
+    <hr>
+    <h2>Products in Store:</h2>
+    """
+    
+    if not products:
+        html += "<p>No products yet. Add some!</p>"
+    else:
+        for p in products:
+            html += f"<div style='border:1px solid #ddd; padding:10px; margin:10px 0'><h3>{p.name}</h3><p>${p.price} | Stock: {p.stock}</p></div>"
+    
+    if user.is_admin:
+        html += '<p><a href="/add-product">+ Add New Product</a></p>'
+    
+    html += '<p><a href="/loginpage">Logout</a></p></body></html>'
+    return html
 
+# PRODUCTS
+@app.route('/products', methods=['POST'])
+@admin_required
+def add_product():
+    data = request.get_json()
+    try:
+        product = Product(
+            name=data['name'],
+            description=data.get('description', ''),
+            price=Decimal(str(data['price'])),
+            stock=data.get('stock', 0),
+            category=data.get('category', 'General'),
+            image_url=data.get('image_url', '')
+        )
+        db.session.add(product)
+        db.session.commit()
+        return jsonify({"msg": "Product added", "product": product.to_dict()}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
