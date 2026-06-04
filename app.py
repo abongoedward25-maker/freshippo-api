@@ -202,15 +202,25 @@ def login_page():
         user = User.query.filter_by(email=email).first()
         if user and check_password_hash(user.password_hash, password):
             token = create_access_token(identity=str(user.id))
-            return f'<h1>Welcome Back!</h1><p><a href="/dashboard">Go to Dashboard</a></p>'
+          return f'<h1>Welcome Back!</h1><p><a href="/dashboard?token={access_token}">Go to Dashboard</a></p>'  
         return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
     return "<h2>Login</h2><form method='POST'><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign In</button></form>"
 
 @app.route('/dashboard')
-@jwt_required()
 def dashboard():
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
+    token = request.args.get('token')
+    if not token:
+        return '<h1>Please login first</h1><a href="/loginpage">Login</a>'
+    
+    try:
+        # Verify token manually
+        from flask_jwt_extended import decode_token
+        decoded = decode_token(token)
+        user_id = decoded['sub']
+        user = User.query.get(user_id)
+    except:
+        return '<h1>Invalid token</h1><a href="/loginpage">Login again</a>'
+    
     products = Product.query.all()
     
     html = f"""
@@ -234,7 +244,7 @@ def dashboard():
             """
     
     if user.is_admin:
-        html += '<p><a href="/add-product">+ Add New Product</a></p>'
+        html += f'<p><a href="/add-product?token={token}">+ Add New Product</a></p>'
     
-    html += '<p><a href="/loginpage">Logout</a></p></body></html>'
+    html += f'<p><a href="/loginpage">Logout</a></p></body></html>'
     return html
