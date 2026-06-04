@@ -1,3 +1,4 @@
+from flask_jwt_extended import JWTManager, create_access_token, decode_token, jwt_required, get_jwt_identity
 from flask import Flask, request, jsonify, make_response
 import os
 from flask_sqlalchemy import SQLAlchemy
@@ -61,6 +62,17 @@ class User(db.Model):
     def to_dict(self):
         return {"id": self.id, "email": self.email, "name": self.name, "phone": self.phone, "is_admin": self.is_admin}
 
+def admin_required(fn):
+    @wraps(fn)
+    @jwt_required()  # <-- now Python knows what this is
+    def wrapper(*args, **kwargs):
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user or not user.is_admin:
+            return jsonify({"msg": "Admin access required"}), 403
+        return fn(*args, **kwargs)
+    return wrapper
+    
 class Product(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
@@ -213,38 +225,4 @@ def login_page():
         return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
     return "<h2>Login</h2><form method='POST'><input name='email' type='email' required placeholder='Email'><br><input name='password' type='password' required placeholder='Password'><br><button>Sign In</button></form>"
 
-@app.route('/dashboard')
-def dashboard():
-    token = request.cookies.get('access_token')
-    if not token:
-        return '<h1>Please login first</h1><a href="/loginpage">Login</a>'
-    
-    try:
-        from flask_jwt_extended import decode_token
-        decoded = decode_token(token)
-        user_id = decoded['sub']
-        user = User.query.get(user_id)
-    except:
-        return '<h1>Invalid token</h1><a href="/loginpage">Login again</a>'
-    
-    products = Product.query.all()
-    
-    html = f"""
-    <html><body style="font-family:Arial; padding:20px; max-width:600px; margin:auto">
-    <h1>🛒 Welcome {user.name}!</h1>
-    <p>Email: {user.email} | Admin: {user.is_admin}</p>
-    <hr>
-    <h2>Products in Store:</h2>
-    """
-    
-    if not products:
-        html += "<p>No products yet. Add some!</p>"
-    else:
-        for p in products:
-            html += f"<div style='border:1px solid #ddd; padding:10px; margin:10px 0'><h3>{p.name}</h3><p>${p.price} | Stock: {p.stock}</p></div>"
-    
-    if user.is_admin:
-        html += '<p><a href="/add-product">+ Add New Product</a></p>'
-    
-    html += '<p><a href="/loginpage">Logout</a></p></body></html>'
-    return html
+@
