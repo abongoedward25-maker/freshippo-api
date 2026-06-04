@@ -202,10 +202,10 @@ def login_page():
         user = User.query.filter_by(email=email).first()
         if user and check_password_hash(user.password_hash, password):
             token = create_access_token(identity=str(user.id))
-          return f'<h1>Welcome Back!</h1><p><a href="/dashboard?token={access_token}">Go to Dashboard</a></p>'  
+            return f'<h1>Welcome Back!</h1><p><a href="/dashboard?token={token}">Go to Dashboard</a></p>'  
         return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
     return "<h2>Login</h2><form method='POST'><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign In</button></form>"
-
+    
 @app.route('/dashboard')
 def dashboard():
     token = request.args.get('token')
