@@ -30,41 +30,7 @@ def homepage():  # changed from home to homepage
     </html>
     """
     return html 
-
-@app.route('/signup', methods=['GET', 'POST'])
-def signup_page():
-    if request.method == 'POST':
-        email = request.form.get('email')
-        password = request.form.get('password')
-        name = request.form.get('name')
-        
-        if User.query.filter_by(email=email).first():
-            return f"Error: Email exists <br><a href='/signup'>Try again</a>"
-        
-        try:
-            user = User(email=email, name=name, phone='')
-            user.password_hash = generate_password_hash(password)
-            db.session.add(user)
-            db.session.commit()
-            token = create_access_token(identity=str(user.id))
-            return f"<h1>Account Created</h1><p>Welcome {name}</p><a href='/loginpage'>Sign In</a>"
-        except Exception as e:
-            db.session.rollback()
-            return f"Error: {str(e)} <br><a href='/signup'>Try again</a>"
     
-    return "<h2>Sign Up</h2><form method='POST'><input name='name' placeholder='Name' required><br><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign Up</button></form>"
-
-@app.route('/loginpage', methods=['GET', 'POST'])
-def login_page():
-    if request.method == 'POST':
-        email = request.form.get('email')
-        password = request.form.get('password')
-        user = User.query.filter_by(email=email).first()
-        if user and check_password_hash(user.password_hash, password):
-            token = create_access_token(identity=str(user.id))
-            return "<h1>Welcome Back</h1>"
-        return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
-    return "<h2>Login</h2><form method='POST'><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign In</button></form>"   
 # === RENDER + PYTHON 3.14 + PSYCOPG3 FIX ===
 db_url = os.getenv('DATABASE_URL', '')
 if db_url.startswith("postgres://"):
@@ -204,3 +170,38 @@ def add_product():
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup_page():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        name = request.form.get('name')
+        
+        if User.query.filter_by(email=email).first():
+            return f"Error: Email exists <br><a href='/signup'>Try again</a>"
+        
+        try:
+            user = User(email=email, name=name, phone='')
+            user.password_hash = generate_password_hash(password)
+            db.session.add(user)
+            db.session.commit()
+            token = create_access_token(identity=str(user.id))
+            return f"<h1>Account Created</h1><p>Welcome {name}</p><a href='/loginpage'>Sign In</a>"
+        except Exception as e:
+            db.session.rollback()
+            return f"Error: {str(e)} <br><a href='/signup'>Try again</a>"
+    
+    return "<h2>Sign Up</h2><form method='POST'><input name='name' placeholder='Name' required><br><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign Up</button></form>"
+
+@app.route('/loginpage', methods=['GET', 'POST'])
+def login_page():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        user = User.query.filter_by(email=email).first()
+        if user and check_password_hash(user.password_hash, password):
+            token = create_access_token(identity=str(user.id))
+            return "<h1>Welcome Back</h1>"
+        return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
+    return "<h2>Login</h2><form method='POST'><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign In</button></form>"
