@@ -202,6 +202,39 @@ def login_page():
         user = User.query.filter_by(email=email).first()
         if user and check_password_hash(user.password_hash, password):
             token = create_access_token(identity=str(user.id))
-            return "<h1>Welcome Back</h1>"
+            return f'<h1>Welcome Back!</h1><p><a href="/dashboard">Go to Dashboard</a></p>'
         return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
     return "<h2>Login</h2><form method='POST'><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign In</button></form>"
+
+@app.route('/dashboard')
+@jwt_required()
+def dashboard():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    products = Product.query.all()
+    
+    html = f"""
+    <html><body style="font-family:Arial; padding:20px; max-width:600px; margin:auto">
+    <h1>🛒 Welcome {user.name}!</h1>
+    <p>Email: {user.email} | Admin: {user.is_admin}</p>
+    <hr>
+    <h2>Products in Store:</h2>
+    """
+    
+    if not products:
+        html += "<p>No products yet. Add some!</p>"
+    else:
+        for p in products:
+            html += f"""
+            <div style="border:1px solid #ddd; padding:10px; margin:10px 0; border-radius:8px">
+            <h3>{p.name}</h3>
+            <p>{p.description}</p>
+            <p><b>Price:</b> ${p.price} | <b>Stock:</b> {p.stock}</p>
+            </div>
+            """
+    
+    if user.is_admin:
+        html += '<p><a href="/add-product">+ Add New Product</a></p>'
+    
+    html += '<p><a href="/loginpage">Logout</a></p></body></html>'
+    return html
