@@ -3,18 +3,28 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
+from datetime import datetime, date
 import os
 import random
 import string
 
 app = Flask(__name__)
-CORS(app)  # Allows your React/Vue app to call this API
+CORS(app)
 
-# Config
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
+# Config - Fixed for Render Postgres
+database_url = os.environ.get('DATABASE_URL')
+if database_url and database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'freshippo_secret_2026')
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY')
+
+# Crash early if env vars missing
+if not database_url:
+    raise RuntimeError("DATABASE_URL is not set. Add it in Render Environment tab")
+if not app.config['JWT_SECRET_KEY']:
+    raise RuntimeError("JWT_SECRET_KEY is not set. Add it in Render Environment tab")
 
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
@@ -54,13 +64,11 @@ def generate_referral_code():
 # Routes
 @app.route('/')
 def home():
-    return jsonify({"status": "Freshippo API running", "version": "2.0"})
+    return jsonify({"status": "Freshippo API running", "version": "2.2"})
 
-# Option 2: Setup endpoint - open this URL once after deploy to create tables
 @app.route('/setup', methods=['GET'])
 def setup_db():
-    with app.app_context():
-        db.create_all()
+    db.create_all()
     return jsonify({"message": "Database tables created successfully", "tables": ["user", "task", "withdrawal"]})
 
 @app.route('/signup', methods=['POST'])
@@ -88,7 +96,6 @@ def signup():
     db.session.add(new_user)
     db.session.commit()
     
-    # Referral bonus: 20 KES for referrer
     if new_user.referred_by:
         referrer = User.query.filter_by(referral_code=new_user.referred_by).first()
         if referrer:
@@ -107,86 +114,4 @@ def signup():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    user = User.query.filter_by(phone=data.get('phone')).first()
-    
-    if not user or not check_password_hash(user.password_hash, data.get('password')):
-        return jsonify({"error": "Invalid credentials"}), 401
-    
-    token = create_access_token(identity=str(user.id))
-    return jsonify({
-        "token": token, 
-        "user_id": user.id, 
-        "name": user.name,
-        "wallet_balance": user.wallet_balance,
-        "referral_code": user.referral_code
-    })
-
-@app.route('/dashboard', methods=['GET'])
-@jwt_required()
-def dashboard():
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
-    
-    today = datetime.utcnow().date()
-    today_task = Task.query.filter_by(user_id=user_id, date=today).first()
-    
-    return jsonify({
-        "name": user.name,
-        "wallet_balance": user.wallet_balance,
-        "referral_code": user.referral_code,
-        "phone": user.phone,
-        "today_task_completed": today_task.completed if today_task else False,
-        "today_earnings": today_task.earnings if today_task else 0
-    })
-
-@app.route('/complete-task', methods=['POST'])
-@jwt_required()
-def complete_task():
-    user_id = get_jwt_identity()
-    today = datetime.utcnow().date()
-    
-    existing = Task.query.filter_by(user_id=user_id, date=today).first()
-    if existing and existing.completed:
-        return jsonify({"error": "Task already completed today"}), 400
-    
-    if not existing:
-        existing = Task(user_id=user_id, date=today)
-        db.session.add(existing)
-    
-    existing.completed = True
-    existing.earnings = 10.0
-    
-    user = User.query.get(user_id)
-    user.wallet_balance += 10.0
-    
-    db.session.commit()
-    return jsonify({"message": "Task completed", "earned": 10.0, "new_balance": user.wallet_balance})
-
-@app.route('/withdraw', methods=['POST'])
-@jwt_required()
-def withdraw():
-    user_id = get_jwt_identity()
-    data = request.get_json()
-    amount = float(data.get('amount', 0))
-    
-    user = User.query.get(user_id)
-    if user.wallet_balance < amount:
-        return jsonify({"error": "Insufficient balance"}), 400
-    if amount < 100:
-        return jsonify({"error": "Minimum withdrawal is 100 KES"}), 400
-    
-    withdrawal = Withdrawal(
-        user_id=user_id,
-        amount=amount,
-        method=data.get('method'),
-        account=data.get('account')
-    )
-    
-    user.wallet_balance -= amount
-    db.session.add(withdrawal)
-    db.session.commit()
-    
-    return jsonify({"message": "Withdrawal request submitted", "status": "pending", "withdrawal_id": withdrawal.id})
-
-if __name__ == '__main__':
-    app.run(debug=True)
+    user = User.query.filter_by(phone=data.get('
