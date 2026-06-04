@@ -20,7 +20,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY')
 
-# Crash early if env vars missing
+# Crash early if env vars missing so you get clear error
 if not database_url:
     raise RuntimeError("DATABASE_URL is not set. Add it in Render Environment tab")
 if not app.config['JWT_SECRET_KEY']:
@@ -38,7 +38,7 @@ class User(db.Model):
     referral_code = db.Column(db.String(10), unique=True, nullable=False)
     referred_by = db.Column(db.String(10))
     wallet_balance = db.Column(db.Float, default=0.0)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.now)
     is_admin = db.Column(db.Boolean, default=False)
 
 class Task(db.Model):
@@ -55,7 +55,7 @@ class Withdrawal(db.Model):
     method = db.Column(db.String(50), nullable=False)
     account = db.Column(db.String(100), nullable=False)
     status = db.Column(db.String(20), default='pending')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.now)
 
 # Helper
 def generate_referral_code():
@@ -64,7 +64,7 @@ def generate_referral_code():
 # Routes
 @app.route('/')
 def home():
-    return jsonify({"status": "Freshippo API running", "version": "2.2"})
+    return jsonify({"status": "Freshippo API running", "version": "2.3"})
 
 @app.route('/setup', methods=['GET'])
 def setup_db():
@@ -114,4 +114,83 @@ def signup():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    user = User.query.filter_by(phone=data.get('
+    user = User.query.filter_by(phone=data.get('phone')).first()
+    
+    if not user or not check_password_hash(user.password_hash, data.get('password')):
+        return jsonify({"error": "Invalid credentials"}), 401
+    
+    token = create_access_token(identity=str(user.id))
+    return jsonify({
+        "token": token, 
+        "user_id": user.id, 
+        "name": user.name,
+        "wallet_balance": user.wallet_balance,
+        "referral_code": user.referral_code
+    })
+
+@app.route('/dashboard', methods=['GET'])
+@jwt_required()
+def dashboard():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    today = date.today()
+    today_task = Task.query.filter_by(user_id=user_id, date=today).first()
+    
+    return jsonify({
+        "name": user.name,
+        "wallet_balance": user.wallet_balance,
+        "referral_code": user.referral_code,
+        "phone": user.phone,
+        "today_task_completed": today_task.completed if today_task else False,
+        "today_earnings": today_task.earnings if today_task else 0
+    })
+
+@app.route('/complete-task', methods=['POST'])
+@jwt_required()
+def complete_task():
+    user_id = get_jwt_identity()
+    today = date.today()
+    
+    existing = Task.query.filter_by(user_id=user_id, date=today).first()
+    if existing and existing.completed:
+        return jsonify({"error": "Task already completed today"}), 400
+    
+    if not existing:
+        existing = Task(user_id=user_id, date=today)
+        db.session.add(existing)
+    
+    existing.completed = True
+    existing.earnings = 10.0
+    
+    user = User.query.get(user_id)
+    user.wallet_balance += 10.0
+    
+    db.session.commit()
+    return jsonify({"message": "Task completed", "earned": 10.0, "new_balance": user.wallet_balance})
+
+@app.route('/withdraw', methods=['POST'])
+@jwt_required()
+def withdraw():
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    amount = float(data.get('amount', 0))
+    
+    user = User.query.get(user_id)
+    if user.wallet_balance < amount:
+        return jsonify({"error": "Insufficient balance"}), 400
+    if amount < 100:
+        return jsonify({"error": "Minimum withdrawal is 100 KES"}), 400
+    
+    withdrawal = Withdrawal(
+        user_id=user_id,
+        amount=amount,
+        method=data.get('method'),
+        account=data.get('account')
+    )
+    
+    user.wallet_balance -= amount
+    db.session.add(withdrawal)
+    db.session.commit()
+    
+    return jsonify({"message": "Withdrawal request submitted", "status": "pending", "withdrawal_id": withdrawal.id})
