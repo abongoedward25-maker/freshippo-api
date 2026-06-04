@@ -1,196 +1,212 @@
+import os
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime, date
-import os
-import random
-import string
+from dotenv import load_dotenv
+from datetime import timedelta
+from decimal import Decimal
+from functools import wraps
+
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
-# Config - Fixed for Render Postgres
-database_url = os.environ.get('DATABASE_URL')
-if database_url and database_url.startswith("postgres://"):
-    database_url = database_url.replace("postgres://", "postgresql://", 1)
+# === RENDER + PYTHON 3.14 FIX ===
+db_url = os.getenv('DATABASE_URL', '')
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+if not db_url:
+    db_url = "sqlite:///freshippo.db"
 
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY')
-
-# Crash early if env vars missing so you get clear error
-if not database_url:
-    raise RuntimeError("DATABASE_URL is not set. Add it in Render Environment tab")
-if not app.config['JWT_SECRET_KEY']:
-    raise RuntimeError("JWT_SECRET_KEY is not set. Add it in Render Environment tab")
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'change-this-secret')
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
 
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
-# Models
+# === MODELS ===
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    phone = db.Column(db.String(15), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
-    referral_code = db.Column(db.String(10), unique=True, nullable=False)
-    referred_by = db.Column(db.String(10))
-    wallet_balance = db.Column(db.Float, default=0.0)
-    created_at = db.Column(db.DateTime, default=datetime.now)
+    name = db.Column(db.String(100), nullable=False)
+    phone = db.Column(db.String(20), default='')
     is_admin = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
 
-class Task(db.Model):
+    def to_dict(self):
+        return {"id": self.id, "email": self.email, "name": self.name, "phone": self.phone, "is_admin": self.is_admin}
+
+class Product(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, default='')
+    price = db.Column(db.Numeric(10, 2), nullable=False)
+    stock = db.Column(db.Integer, default=0)
+    category = db.Column(db.String(100), default='General')
+    image_url = db.Column(db.String(500), default='')
+
+    def to_dict(self):
+        return {
+            "id": self.id, "name": self.name, "description": self.description,
+            "price": float(self.price), "stock": self.stock,
+            "category": self.category, "image_url": self.image_url
+        }
+
+class CartItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    date = db.Column(db.Date, nullable=False)
-    completed = db.Column(db.Boolean, default=False)
-    earnings = db.Column(db.Float, default=0.0)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    quantity = db.Column(db.Integer, default=1, nullable=False)
 
-class Withdrawal(db.Model):
+class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    amount = db.Column(db.Float, nullable=False)
-    method = db.Column(db.String(50), nullable=False)
-    account = db.Column(db.String(100), nullable=False)
+    total_amount = db.Column(db.Numeric(10, 2), nullable=False)
     status = db.Column(db.String(20), default='pending')
-    created_at = db.Column(db.DateTime, default=datetime.now)
+    address = db.Column(db.Text, default='')
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
 
-# Helper
-def generate_referral_code():
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+class OrderItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    price = db.Column(db.Numeric(10, 2), nullable=False)
 
-# Routes
+# Admin check
+def admin_required(fn):
+    @wraps(fn)
+    @jwt_required()
+    def wrapper(*args, **kwargs):
+        user = User.query.get(get_jwt_identity())
+        if not user or not user.is_admin:
+            return jsonify({"msg": "Admin required"}), 403
+        return fn(*args, **kwargs)
+    return wrapper
+
+# Create tables only, no seed data
+with app.app_context():
+    db.create_all()
+
+# === ROUTES ===
 @app.route('/')
 def home():
-    return jsonify({"status": "Freshippo API running", "version": "2.3"})
+    return jsonify({"status": "Freshippo API LIVE ✅", "products": "add via POST /products"})
 
-@app.route('/setup', methods=['GET'])
-def setup_db():
-    db.create_all()
-    return jsonify({"message": "Database tables created successfully", "tables": ["user", "task", "withdrawal"]})
+@app.route('/health')
+def health():
+    try:
+        db.session.execute(db.text('SELECT 1'))
+        return jsonify({"status": "healthy"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "db": str(e)}), 500
 
-@app.route('/signup', methods=['POST'])
-def signup():
+# AUTH
+@app.route('/auth/register', methods=['POST'])
+def register():
     data = request.get_json()
-    
-    if not data or not data.get('phone') or not data.get('password') or not data.get('name'):
-        return jsonify({"error": "Missing required fields: name, phone, password"}), 400
-    
-    if User.query.filter_by(phone=data['phone']).first():
-        return jsonify({"error": "Phone already registered"}), 400
-    
-    referral_code = generate_referral_code()
-    while User.query.filter_by(referral_code=referral_code).first():
-        referral_code = generate_referral_code()
-    
-    new_user = User(
-        name=data['name'],
-        phone=data['phone'],
-        password_hash=generate_password_hash(data['password']),
-        referral_code=referral_code,
-        referred_by=data.get('referral_code')
-    )
-    
-    db.session.add(new_user)
+    if not all([data.get('email'), data.get('password'), data.get('name')]):
+        return jsonify({"msg": "email, password, name required"}), 400
+    if User.query.filter_by(email=data['email']).first():
+        return jsonify({"msg": "Email exists"}), 400
+    user = User(email=data['email'], name=data['name'], phone=data.get('phone', ''))
+    user.password_hash = generate_password_hash(data['password'])
+    db.session.add(user)
     db.session.commit()
-    
-    if new_user.referred_by:
-        referrer = User.query.filter_by(referral_code=new_user.referred_by).first()
-        if referrer:
-            referrer.wallet_balance += 20.0
-            db.session.commit()
-    
-    token = create_access_token(identity=str(new_user.id))
-    return jsonify({
-        "message": "User created successfully",
-        "token": token,
-        "referral_code": referral_code,
-        "user_id": new_user.id,
-        "wallet_balance": new_user.wallet_balance
-    }), 201
+    token = create_access_token(identity=str(user.id))
+    return jsonify({"access_token": token, "user": user.to_dict()}), 201
 
-@app.route('/login', methods=['POST'])
+@app.route('/auth/login', methods=['POST'])
 def login():
     data = request.get_json()
-    user = User.query.filter_by(phone=data.get('phone')).first()
-    
-    if not user or not check_password_hash(user.password_hash, data.get('password')):
-        return jsonify({"error": "Invalid credentials"}), 401
-    
-    token = create_access_token(identity=str(user.id))
-    return jsonify({
-        "token": token, 
-        "user_id": user.id, 
-        "name": user.name,
-        "wallet_balance": user.wallet_balance,
-        "referral_code": user.referral_code
-    })
+    user = User.query.filter_by(email=data.get('email')).first()
+    if user and check_password_hash(user.password_hash, data.get('password')):
+        token = create_access_token(identity=str(user.id))
+        return jsonify({"access_token": token, "user": user.to_dict()}), 200
+    return jsonify({"msg": "Invalid credentials"}), 401
 
-@app.route('/dashboard', methods=['GET'])
+# PRODUCTS - YOU ADD THESE
+@app.route('/products', methods=['GET'])
+def get_products():
+    products = Product.query.all()
+    return jsonify([p.to_dict() for p in products]), 200
+
+@app.route('/products/<int:product_id>', methods=['GET'])
+def get_product(product_id):
+    product = Product.query.get_or_404(product_id)
+    return jsonify(product.to_dict()), 200
+
+@app.route('/products', methods=['POST'])
+@admin_required
+def add_product():
+    data = request.get_json()
+    try:
+        product = Product(
+            name=data['name'],
+            description=data.get('description', ''),
+            price=Decimal(str(data['price'])),
+            stock=data.get('stock', 0),
+            category=data.get('category', 'General'),
+            image_url=data.get('image_url', '')
+        )
+        db.session.add(product)
+        db.session.commit()
+        return jsonify({"msg": "Product added", "product": product.to_dict()}), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+# CART
+@app.route('/cart', methods=['GET'])
 @jwt_required()
-def dashboard():
+def get_cart():
     user_id = get_jwt_identity()
-    user = User.query.get(user_id)
-    
-    today = date.today()
-    today_task = Task.query.filter_by(user_id=user_id, date=today).first()
-    
-    return jsonify({
-        "name": user.name,
-        "wallet_balance": user.wallet_balance,
-        "referral_code": user.referral_code,
-        "phone": user.phone,
-        "today_task_completed": today_task.completed if today_task else False,
-        "today_earnings": today_task.earnings if today_task else 0
-    })
+    items = CartItem.query.filter_by(user_id=user_id).all()
+    result = []
+    for item in items:
+        p = Product.query.get(item.product_id)
+        if p:
+            result.append({"id": item.id, "product": p.to_dict(), "quantity": item.quantity})
+    return jsonify(result), 200
 
-@app.route('/complete-task', methods=['POST'])
+@app.route('/cart/add', methods=['POST'])
 @jwt_required()
-def complete_task():
-    user_id = get_jwt_identity()
-    today = date.today()
-    
-    existing = Task.query.filter_by(user_id=user_id, date=today).first()
-    if existing and existing.completed:
-        return jsonify({"error": "Task already completed today"}), 400
-    
-    if not existing:
-        existing = Task(user_id=user_id, date=today)
-        db.session.add(existing)
-    
-    existing.completed = True
-    existing.earnings = 10.0
-    
-    user = User.query.get(user_id)
-    user.wallet_balance += 10.0
-    
-    db.session.commit()
-    return jsonify({"message": "Task completed", "earned": 10.0, "new_balance": user.wallet_balance})
-
-@app.route('/withdraw', methods=['POST'])
-@jwt_required()
-def withdraw():
+def add_cart():
     user_id = get_jwt_identity()
     data = request.get_json()
-    amount = float(data.get('amount', 0))
-    
-    user = User.query.get(user_id)
-    if user.wallet_balance < amount:
-        return jsonify({"error": "Insufficient balance"}), 400
-    if amount < 100:
-        return jsonify({"error": "Minimum withdrawal is 100 KES"}), 400
-    
-    withdrawal = Withdrawal(
-        user_id=user_id,
-        amount=amount,
-        method=data.get('method'),
-        account=data.get('account')
-    )
-    
-    user.wallet_balance -= amount
-    db.session.add(withdrawal)
+    item = CartItem.query.filter_by(user_id=user_id, product_id=data['product_id']).first()
+    if item:
+        item.quantity += data.get('quantity', 1)
+    else:
+        db.session.add(CartItem(user_id=user_id, product_id=data['product_id'], quantity=data.get('quantity', 1)))
     db.session.commit()
-    
-    return jsonify({"message": "Withdrawal request submitted", "status": "pending", "withdrawal_id": withdrawal.id})
+    return jsonify({"msg": "Added to cart"}), 200
+
+# ORDERS
+@app.route('/orders', methods=['POST'])
+@jwt_required()
+def create_order():
+    user_id = get_jwt_identity()
+    cart = CartItem.query.filter_by(user_id=user_id).all()
+    if not cart:
+        return jsonify({"msg": "Cart empty"}), 400
+    total = sum(Product.query.get(i.product_id).price * i.quantity for i in cart)
+    order = Order(user_id=user_id, total_amount=total, address=request.get_json().get('address', ''))
+    db.session.add(order)
+    db.session.flush()
+    for i in cart:
+        p = Product.query.get(i.product_id)
+        db.session.add(OrderItem(order_id=order.id, product_id=i.product_id, quantity=i.quantity, price=p.price))
+        p.stock -= i.quantity
+    CartItem.query.filter_by(user_id=user_id).delete()
+    db.session.commit()
+    return jsonify({"msg": "Order placed", "order_id": order.id}), 201
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
