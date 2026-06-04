@@ -29,43 +29,42 @@ def homepage():  # changed from home to homepage
         </body>
     </html>
     """
-    return html
+    return html 
 
-   @app.route('/signup', methods=['GET', 'POST'])
+@app.route('/signup', methods=['GET', 'POST'])
 def signup_page():
     if request.method == 'POST':
         email = request.form.get('email')
         password = request.form.get('password')
         name = request.form.get('name')
         
-        # Check if user exists
         if User.query.filter_by(email=email).first():
             return f"Error: Email exists <br><a href='/signup'>Try again</a>"
         
-        # Create user directly
         try:
             user = User(email=email, name=name, phone='')
             user.password_hash = generate_password_hash(password)
             db.session.add(user)
             db.session.commit()
             token = create_access_token(identity=str(user.id))
-            return f"<h1>✅ Account Created</h1><p>Welcome {name}</p><p>Token: {token[:20]}...</p><a href='/loginpage'>Sign In</a>"
+            return f"<h1>Account Created</h1><p>Welcome {name}</p><a href='/loginpage'>Sign In</a>"
         except Exception as e:
             db.session.rollback()
             return f"Error: {str(e)} <br><a href='/signup'>Try again</a>"
     
-    return """
-    <html><body style="font-family:Arial; max-width:400px; margin:50px auto; padding:20px; border:1px solid #ddd; border-radius:10px">
-    <h2>🛒 Sign Up</h2>
-    <form method='POST'>
-    <p><input name='name' placeholder='Full Name' required style="width:100%; padding:10px"></p>
-    <p><input name='email' type='email' placeholder='Email' required style="width:100%; padding:10px"></p>
-    <p><input name='password' type='password' placeholder='Password' required style="width:100%; padding:10px"></p>
-    <p><button type='submit' style="width:100%; padding:12px; background:#28a745; color:white; border:none">Create Account</button></p>
-    </form>
-    <p>Already have account? <a href='/loginpage'>Sign In</a></p>
-    </body></html>
-    """     
+    return "<h2>Sign Up</h2><form method='POST'><input name='name' placeholder='Name' required><br><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign Up</button></form>"
+
+@app.route('/loginpage', methods=['GET', 'POST'])
+def login_page():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        user = User.query.filter_by(email=email).first()
+        if user and check_password_hash(user.password_hash, password):
+            token = create_access_token(identity=str(user.id))
+            return "<h1>Welcome Back</h1>"
+        return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
+    return "<h2>Login</h2><form method='POST'><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign In</button></form>"   
 # === RENDER + PYTHON 3.14 + PSYCOPG3 FIX ===
 db_url = os.getenv('DATABASE_URL', '')
 if db_url.startswith("postgres://"):
