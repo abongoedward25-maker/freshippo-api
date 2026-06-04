@@ -14,10 +14,12 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# === RENDER + PYTHON 3.14 FIX ===
+# === RENDER + PYTHON 3.14 + PSYCOPG3 FIX ===
 db_url = os.getenv('DATABASE_URL', '')
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
+if db_url.startswith("postgresql://"):
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
 if not db_url:
     db_url = "sqlite:///freshippo.db"
 
@@ -152,61 +154,4 @@ def add_product():
             description=data.get('description', ''),
             price=Decimal(str(data['price'])),
             stock=data.get('stock', 0),
-            category=data.get('category', 'General'),
-            image_url=data.get('image_url', '')
-        )
-        db.session.add(product)
-        db.session.commit()
-        return jsonify({"msg": "Product added", "product": product.to_dict()}), 201
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": str(e)}), 500
-
-# CART
-@app.route('/cart', methods=['GET'])
-@jwt_required()
-def get_cart():
-    user_id = get_jwt_identity()
-    items = CartItem.query.filter_by(user_id=user_id).all()
-    result = []
-    for item in items:
-        p = Product.query.get(item.product_id)
-        if p:
-            result.append({"id": item.id, "product": p.to_dict(), "quantity": item.quantity})
-    return jsonify(result), 200
-
-@app.route('/cart/add', methods=['POST'])
-@jwt_required()
-def add_cart():
-    user_id = get_jwt_identity()
-    data = request.get_json()
-    item = CartItem.query.filter_by(user_id=user_id, product_id=data['product_id']).first()
-    if item:
-        item.quantity += data.get('quantity', 1)
-    else:
-        db.session.add(CartItem(user_id=user_id, product_id=data['product_id'], quantity=data.get('quantity', 1)))
-    db.session.commit()
-    return jsonify({"msg": "Added to cart"}), 200
-
-# ORDERS
-@app.route('/orders', methods=['POST'])
-@jwt_required()
-def create_order():
-    user_id = get_jwt_identity()
-    cart = CartItem.query.filter_by(user_id=user_id).all()
-    if not cart:
-        return jsonify({"msg": "Cart empty"}), 400
-    total = sum(Product.query.get(i.product_id).price * i.quantity for i in cart)
-    order = Order(user_id=user_id, total_amount=total, address=request.get_json().get('address', ''))
-    db.session.add(order)
-    db.session.flush()
-    for i in cart:
-        p = Product.query.get(i.product_id)
-        db.session.add(OrderItem(order_id=order.id, product_id=i.product_id, quantity=i.quantity, price=p.price))
-        p.stock -= i.quantity
-    CartItem.query.filter_by(user_id=user_id).delete()
-    db.session.commit()
-    return jsonify({"msg": "Order placed", "order_id": order.id}), 201
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
+            category=data
