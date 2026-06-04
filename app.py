@@ -199,11 +199,19 @@ def signup_page():
     
     return "<h2>Sign Up</h2><form method='POST'><input name='name' placeholder='Name' required><br><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign Up</button></form>"
 
-if user and check_password_hash(user.password_hash, password):
-    token = create_access_token(identity=str(user.id))
-    resp = make_response(f'<h1>Welcome Back!</h1><p><a href="/dashboard">Go to Dashboard</a></p>')
-    resp.set_cookie('access_token', token, httponly=True)
-    return resp
+@app.route('/loginpage', methods=['GET', 'POST'])
+def login_page():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        user = User.query.filter_by(email=email).first()
+        if user and check_password_hash(user.password_hash, password):
+            token = create_access_token(identity=str(user.id))
+            resp = make_response(f'<h1>Welcome Back!</h1><p><a href="/dashboard">Go to Dashboard</a></p>')
+            resp.set_cookie('access_token', token, httponly=True)
+            return resp
+        return "Error: Wrong credentials <br><a href='/loginpage'>Try again</a>"
+    return "<h2>Login</h2><form method='POST'><input name='email' type='email' required placeholder='Email'><br><input name='password' type='password' required placeholder='Password'><br><button>Sign In</button></form>"
 
 @app.route('/dashboard')
 def dashboard():
