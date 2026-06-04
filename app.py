@@ -39,7 +39,7 @@ def signup_page():
         name = request.form.get('name')
         try:
             with app.test_request_context('/register', method='POST', json={'email': email, 'password': password, 'name': name}):
-                result = register()
+                result = register_user()
                 data = result.get_json() if hasattr(result, 'get_json') else {}
         except Exception as e:
             return f"Error: {e} <br><a href='/signup'>Back</a>"
@@ -55,7 +55,7 @@ def login_page():
         password = request.form.get('password')
         try:
             with app.test_request_context('/login', method='POST', json={'email': email, 'password': password}):
-                result = login()
+                result = login_user()
                 data = result.get_json() if hasattr(result, 'get_json') else {}
         except Exception as e:
             return f"Error: {e} <br><a href='/loginpage'>Back</a>"
