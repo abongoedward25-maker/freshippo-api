@@ -5,7 +5,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
-from datetime import timedelta
+from datetime import timedelta, datetime
 from decimal import Decimal
 from functools import wraps
 
@@ -39,10 +39,17 @@ class User(db.Model):
     name = db.Column(db.String(100), nullable=False)
     phone = db.Column(db.String(20), default='')
     is_admin = db.Column(db.Boolean, default=False)
+    balance = db.Column(db.Numeric(10, 2), default=0.00)  # NEW: wallet balance
+    total_withdrawn = db.Column(db.Numeric(10, 2), default=0.00)  # NEW: lifetime withdrawn
+    current_stage = db.Column(db.Integer, default=1)  # NEW: 1, 2, 3
+    stage_status = db.Column(db.String(20), default='pending')  # NEW: pending/approved
+    stage_updated_at = db.Column(db.DateTime, server_default=db.func.now())  # NEW: when stage changed
     created_at = db.Column(db.DateTime, server_default=db.func.now())
 
     def to_dict(self):
-        return {"id": self.id, "email": self.email, "name": self.name, "phone": self.phone, "is_admin": self.is_admin}
+        return {"id": self.id, "email": self.email, "name": self.name, "phone": self.phone, 
+                "is_admin": self.is_admin, "balance": float(self.balance), 
+                "current_stage": self.current_stage, "stage_status": self.stage_status}
 
 class Product(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -80,6 +87,14 @@ class OrderItem(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
     quantity = db.Column(db.Integer, nullable=False)
     price = db.Column(db.Numeric(10, 2), nullable=False)
+
+class Withdrawal(db.Model):  # NEW TABLE
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    status = db.Column(db.String(20), default='pending')  # pending/approved/rejected
+    requested_at = db.Column(db.DateTime, server_default=db.func.now())
+    approved_at = db.Column(db.DateTime, nullable=True)
 
 # === DECORATOR ===
 def admin_required(fn):
@@ -191,6 +206,16 @@ def dashboard():
     
     products = Product.query.all()
     
+    # Check withdrawal cooldown: 10 days
+    last_withdrawal = Withdrawal.query.filter_by(user_id=user.id, status='approved').order_by(Withdrawal.approved_at.desc()).first()
+    can_withdraw = True
+    days_left = 0
+    if last_withdrawal:
+        days_passed = (datetime.utcnow() - last_withdrawal.approved_at).days
+        if days_passed < 10:
+            can_withdraw = False
+            days_left = 10 - days_passed
+    
     html = "<h1>🛒 Welcome " + user.name + "!</h1>"
     html += "<p>Email: " + user.email + " | Admin: " + str(user.is_admin) + "</p><hr>"
     html += "<h2>Products in Store:</h2>"
@@ -199,30 +224,42 @@ def dashboard():
         html += "<p>No products yet. Add some!</p>"
     else:
         for p in products:
-            html += "<div style='border:1px solid #ddd; padding:10px; margin:10px 0; color:#ddd'><h3>" + p.name + "</h3><p>$" + str(p.price) + " | Stock: " + str(p.stock) + "</p></div>"
+            html += "<div style='border:1px solid #333; padding:12px; margin:10px 0; background:#0a0a0a; border-radius:8px'><h3 style='margin:0 0 5px 0'>" + p.name + "</h3><p style='margin:0; color:#aaa'>$" + str(p.price) + " | Stock: " + str(p.stock) + "</p></div>"
     
     if user.is_admin:
-        html += '<p><a href="/add-product">+ Add New Product</a></p>'
+        html += '<p style="margin-top:20px"><a href="/add-product" class="btn">+ Add New Product</a></p>'
+        html += '<p><a href="/admin/stages" class="btn">👑 Approve Stages</a></p>'
+        html += '<p><a href="/admin/withdrawals" class="btn">💰 Approve Withdrawals</a></p>'
     
-    html += '<p><a href="/loginpage">Logout</a></p>'
+    html += '<p style="margin-top:30px"><a href="/loginpage" class="btn red">🚪 Logout</a></p>'
+    
+    # Withdrawal button logic
+    withdraw_btn = '<a href="/withdraw" class="btn">💰 Request Withdrawal</a>' if can_withdraw else '<span style="color:#ffaa00">⏳ Withdrawal available in ' + str(days_left) + ' days</span>'
     
     wrapper = """
     <style>
-    body {background:#0a0a0a; color:white; font-family:Arial}
-    .watermark {position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-15deg); font-size: 15vw; color: rgba(168, 85, 247, 0.08); z-index: 0; pointer-events: none;}
+    body {background:#0a0a0a; color:white; font-family:Arial; margin:0}
+    .watermark {position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-15deg); font-size: 15vw; color: rgba(168, 85, 247, 0.08); z-index: 0; pointer-events: none; white-space: nowrap}
     .content {position: relative; z-index: 1; padding: 20px; max-width: 800px; margin: auto}
     .box {padding: 18px; margin: 12px 0; background: #111; border-left: 3px solid #a855f7; border-radius: 10px;}
+    .btn {display: inline-block; padding: 10px 20px; margin: 8px 5px; background: #a855f7; color: white; text-decoration: none; border-radius: 8px; font-weight: 600;}
+    .btn.red {background: #ff4444}
+    .stats {display: flex; gap: 15px; margin-top: 10px}
+    .stat {flex: 1; background: #0a0a0a; padding: 12px; border-radius: 6px; text-align: center}
     </style>
     <div class="watermark">Freshippo Freshippo Freshippo</div>
     <div class="content">
         <div class="box">1️⃣ Admin Panel | Status: """ + ("✅ Active" if user.is_admin else "❌ No Access") + """</div>
         <div class="box">2️⃣ Products: """ + str(len(products)) + """ items in store</div>
         <div class="box">3️⃣ Settings - Coming soon</div>
+        <div class="box">4️⃣ Withdrawal<div class="stats"><div class="stat"><b>$""" + str(user.balance) + """</b><br>Balance</div><div class="stat"><b>$""" + str(user.total_withdrawn) + """</b><br>Total Withdrawn</div></div>""" + withdraw_btn + """<p style="font-size:12px; color:#aaa; margin-top:8px">10-day cooldown after each withdrawal</p></div>
+        <div class="box">5️⃣ Stages<div class="stats"><div class="stat"><b>Stage """ + str(user.current_stage) + """</b><br>Current</div><div class="stat"><b>""" + user.stage_status.upper() + """</b><br>Status</div></div><p style="font-size:12px; color:#aaa; margin-top:8px">Admin must approve Stage 2 & 3 upgrades</p></div>
+        <div class="box" style="text-align:center">6️⃣ Quick Actions<br><a href="/" class="btn">🏠 Home</a><a href="/loginpage" class="btn red">🚪 Logout</a></div>
         <hr style="margin:30px 0; border-color:#333">
         """ + html + """
     </div>
     """
-  return wrapper
+    return wrapper
 
 # PRODUCTS
 @app.route('/products', methods=['POST'])
@@ -244,3 +281,89 @@ def add_product():
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
+
+# === WITHDRAWAL ROUTES ===
+@app.route('/withdraw', methods=['GET', 'POST'])
+@jwt_required()
+def withdraw():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    # Check 10-day cooldown
+    last_withdrawal = Withdrawal.query.filter_by(user_id=user.id, status='approved').order_by(Withdrawal.approved_at.desc()).first()
+    if last_withdrawal:
+        days_passed = (datetime.utcnow() - last_withdrawal.approved_at).days
+        if days_passed < 10:
+            return '<h1>⏳ Cooldown active</h1><p>Next withdrawal in ' + str(10 - days_passed) + ' days</p><a href="/dashboard">Back</a>'
+    
+    if request.method == 'POST':
+        amount = Decimal(request.form.get('amount', '0'))
+        if amount <= 0 or amount > user.balance:
+            return 'Invalid amount <br><a href="/dashboard">Back</a>'
+        
+        withdrawal = Withdrawal(user_id=user.id, amount=amount)
+        db.session.add(withdrawal)
+        user.balance -= amount
+        db.session.commit()
+        return '<h1>✅ Request sent!</h1><p>Admin will review your $' + str(amount) + ' withdrawal</p><a href="/dashboard">Back</a>'
+    
+    return '<h2>Request Withdrawal</h2><p>Balance: $' + str(user.balance) + '</p><form method="POST"><input name="amount" type="number" step="0.01" placeholder="Amount" required><br><button>Request</button></form>'
+
+# === ADMIN ROUTES ===
+@app.route('/admin/withdrawals')
+@admin_required
+def admin_withdrawals():
+    withdrawals = Withdrawal.query.filter_by(status='pending').all()
+    html = '<h1>💰 Pending Withdrawals</h1>'
+    for w in withdrawals:
+        user = User.query.get(w.user_id)
+        html += '<div style="border:1px solid #444; padding:15px; margin:10px 0; background:#111"><p><b>' + user.name + '</b> - $' + str(w.amount) + '</p><a href="/admin/withdraw/approve/' + str(w.id) + '" class="btn">Approve</a> <a href="/admin/withdraw/reject/' + str(w.id) + '" class="btn red">Reject</a></div>'
+    return html + '<p><a href="/dashboard">Back</a></p>'
+
+@app.route('/admin/withdraw/approve/<int:w_id>')
+@admin_required
+def approve_withdraw(w_id):
+    w = Withdrawal.query.get(w_id)
+    user = User.query.get(w.user_id)
+    w.status = 'approved'
+    w.approved_at = datetime.utcnow()
+    user.total_withdrawn += w.amount
+    db.session.commit()
+    return 'Approved! <a href="/admin/withdrawals">Back</a>'
+
+@app.route('/admin/withdraw/reject/<int:w_id>')
+@admin_required
+def reject_withdraw(w_id):
+    w = Withdrawal.query.get(w_id)
+    user = User.query.get(w.user_id)
+    w.status = 'rejected'
+    user.balance += w.amount  # refund
+    db.session.commit()
+    return 'Rejected & refunded! <a href="/admin/withdrawals">Back</a>'
+
+@app.route('/admin/stages')
+@admin_required
+def admin_stages():
+    users = User.query.filter(User.stage_status=='pending', User.current_stage>1).all()
+    html = '<h1>👑 Pending Stage Approvals</h1>'
+    for u in users:
+        html += '<div style="border:1px solid #444; padding:15px; margin:10px 0; background:#111"><p><b>' + u.name + '</b> wants Stage ' + str(u.current_stage) + '</p><a href="/admin/stage/approve/' + str(u.id) + '" class="btn">Approve</a> <a href="/admin/stage/reject/' + str(u.id) + '" class="btn red">Reject</a></div>'
+    return html + '<p><a href="/dashboard">Back</a></p>'
+
+@app.route('/admin/stage/approve/<int:user_id>')
+@admin_required
+def approve_stage(user_id):
+    user = User.query.get(user_id)
+    user.stage_status = 'approved'
+    user.stage_updated_at = datetime.utcnow()
+    db.session.commit()
+    return 'Stage approved! <a href="/admin/stages">Back</a>'
+
+@app.route('/admin/stage/reject/<int:user_id>')
+@admin_required
+def reject_stage(user_id):
+    user = User.query.get(user_id)
+    user.current_stage = max(1, user.current_stage - 1)  # revert
+    user.stage_status = 'approved'
+    db.session.commit()
+    return 'Stage rejected! <a href="/admin/stages">Back</a>'
