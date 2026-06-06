@@ -191,86 +191,38 @@ def dashboard():
     
     products = Product.query.all()
     
-    html = f"""
-    <h1>🛒 Welcome {user.name}!</h1>
-    <p>Email: {user.email} | Admin: {user.is_admin}</p>
-    <hr>
-    <h2>Products in Store:</h2>
-    """
+    html = "<h1>🛒 Welcome " + user.name + "!</h1>"
+    html += "<p>Email: " + user.email + " | Admin: " + str(user.is_admin) + "</p><hr>"
+    html += "<h2>Products in Store:</h2>"
     
     if not products:
         html += "<p>No products yet. Add some!</p>"
     else:
         for p in products:
-            html += f"<div style='border:1px solid #ddd; padding:10px; margin:10px 0; color:#ddd'><h3>{p.name}</h3><p>${p.price} | Stock: {p.stock}</p></div>"
+            html += "<div style='border:1px solid #ddd; padding:10px; margin:10px 0; color:#ddd'><h3>" + p.name + "</h3><p>$" + str(p.price) + " | Stock: " + str(p.stock) + "</p></div>"
     
     if user.is_admin:
         html += '<p><a href="/add-product">+ Add New Product</a></p>'
     
     html += '<p><a href="/loginpage">Logout</a></p>'
     
-    return f"""
-<style>
-body {{background:#0a0a0a; color:white; font-family:Arial}}
-.watermark {{
-    position: fixed; top: 50%; left: 50%; 
-    transform: translate(-50%, -50%) rotate(-15deg);
-    font-size: 15vw; color: rgba(168, 85, 247, 0.08);
-    z-index: 0; pointer-events: none;
-}}
-.content {{position: relative; z-index: 1; padding: 20px; max-width: 800px; margin: auto}}
-.box {{
-    padding: 18px; margin: 12px 0; background: #111;
-    border-left: 3px solid #a855f7; border-radius: 10px;
-}}
-.btn {{
-    display: inline-block; padding: 10px 20px; margin: 8px 5px;
-    background: #a855f7; color: white; text-decoration: none;
-    border-radius: 8px; font-weight: 600;
-}}
-.btn.red {{background: #ff4444}}
-.stats {{display: flex; gap: 15px; margin-top: 10px}}
-.stat {{flex: 1; background: #0a0a0a; padding: 12px; border-radius: 6px; text-align: center}}
-</style>
-
-<div class="watermark">Freshippo Freshippo Freshippo</div>
-
-<div class="content">
-    <div class="box">1️⃣ Admin Panel | Status: {"✅ Active" if user.is_admin else "❌ No Access"}</div>
-    <div class="box">2️⃣ Products: {len(products)} items in store</div>
-    <div class="box">3️⃣ Settings - Coming soon</div>
-    
-    <div class="box">
-        4️⃣ Withdrawal
-        <div class="stats">
-            <div class="stat"><b>$0.00</b><br>Balance</div>
-            <div class="stat"><b>0</b><br>Total Withdrawn</div>
-        </div>
-        <a href="#" class="btn">💰 Request Withdrawal</a>
+    wrapper = """
+    <style>
+    body {background:#0a0a0a; color:white; font-family:Arial}
+    .watermark {position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-15deg); font-size: 15vw; color: rgba(168, 85, 247, 0.08); z-index: 0; pointer-events: none;}
+    .content {position: relative; z-index: 1; padding: 20px; max-width: 800px; margin: auto}
+    .box {padding: 18px; margin: 12px 0; background: #111; border-left: 3px solid #a855f7; border-radius: 10px;}
+    </style>
+    <div class="watermark">Freshippo Freshippo Freshippo</div>
+    <div class="content">
+        <div class="box">1️⃣ Admin Panel | Status: """ + ("✅ Active" if user.is_admin else "❌ No Access") + """</div>
+        <div class="box">2️⃣ Products: """ + str(len(products)) + """ items in store</div>
+        <div class="box">3️⃣ Settings - Coming soon</div>
+        <hr style="margin:30px 0; border-color:#333">
+        """ + html + """
     </div>
-    
-    <div class="box">
-        5️⃣ Stages
-        <div class="stats">
-            <div class="stat"><b>Stage 1</b><br>Current</div>
-            <div class="stat"><b>0/10</b><br>Orders to next</div>
-        </div>
-    </div>
-    
-    <div class="box" style="text-align:center">
-        6️⃣ Quick Actions<br>
-        <a href="/" class="btn">🏠 Home</a>
-        <a href="/loginpage" class="btn red">🚪 Logout</a>
-    </div>
-    
-    <hr style="margin:30px 0; border-color:#333">
-    
-    <h3>Products List:</h3>
-    {html}
-</div>
-"""
-    
-    
+    """
+  return wrapper
 
 # PRODUCTS
 @app.route('/products', methods=['POST'])
