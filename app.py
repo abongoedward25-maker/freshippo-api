@@ -31,7 +31,7 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
-# === AUTO MIGRATE MISSING COLUMNS - FIXED ===
+# === AUTO MIGRATE MISSING COLUMNS - FINAL FIX ===
 from sqlalchemy import text
 with app.app_context():
     db.create_all()
@@ -40,7 +40,7 @@ with app.app_context():
         'total_withdrawn NUMERIC(10,2) DEFAULT 0.00',
         'current_stage INTEGER DEFAULT 1',
         'stage_status VARCHAR(20) DEFAULT \'pending\'',
-        'stage_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP'
+        'stage_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
     ]
     for col in cols:
         try:
@@ -49,8 +49,8 @@ with app.app_context():
             print(f"Added column: {col.split()[0]}")
         except Exception as e:
             db.session.rollback()
-            print(f"Column {col.split()[0]} already exists or error: {e}")
-
+            print(f"Column {col.split()[0]} already exists: {e}")
+            
 # === MODELS ===
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
