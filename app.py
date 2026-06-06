@@ -31,21 +31,25 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
-# === AUTO MIGRATE MISSING COLUMNS ===
+# === AUTO MIGRATE MISSING COLUMNS - FIXED ===
+from sqlalchemy import text
 with app.app_context():
     db.create_all()
-    # Add missing columns for existing users
-    try:
-        db.session.execute(db.text('ALTER TABLE user ADD COLUMN balance NUMERIC(10,2) DEFAULT 0.00'))
-        db.session.execute(db.text('ALTER TABLE user ADD COLUMN total_withdrawn NUMERIC(10,2) DEFAULT 0.00'))
-        db.session.execute(db.text('ALTER TABLE user ADD COLUMN current_stage INTEGER DEFAULT 1'))
-        db.session.execute(db.text('ALTER TABLE user ADD COLUMN stage_status VARCHAR(20) DEFAULT "pending"'))
-        db.session.execute(db.text('ALTER TABLE user ADD COLUMN stage_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP'))
-        db.session.commit()
-        print("DB migrated successfully")
-    except Exception as e:
-        # Columns already exist, ignore error
-        pass
+    cols = [
+        'balance NUMERIC(10,2) DEFAULT 0.00',
+        'total_withdrawn NUMERIC(10,2) DEFAULT 0.00',
+        'current_stage INTEGER DEFAULT 1',
+        'stage_status VARCHAR(20) DEFAULT \'pending\'',
+        'stage_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP'
+    ]
+    for col in cols:
+        try:
+            db.session.execute(text(f'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS {col}'))
+            db.session.commit()
+            print(f"Added column: {col.split()[0]}")
+        except Exception as e:
+            db.session.rollback()
+            print(f"Column {col.split()[0]} already exists or error: {e}")
 
 # === MODELS ===
 class User(db.Model):
