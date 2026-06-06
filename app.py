@@ -31,6 +31,22 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
+# === AUTO MIGRATE MISSING COLUMNS ===
+with app.app_context():
+    db.create_all()
+    # Add missing columns for existing users
+    try:
+        db.session.execute(db.text('ALTER TABLE user ADD COLUMN balance NUMERIC(10,2) DEFAULT 0.00'))
+        db.session.execute(db.text('ALTER TABLE user ADD COLUMN total_withdrawn NUMERIC(10,2) DEFAULT 0.00'))
+        db.session.execute(db.text('ALTER TABLE user ADD COLUMN current_stage INTEGER DEFAULT 1'))
+        db.session.execute(db.text('ALTER TABLE user ADD COLUMN stage_status VARCHAR(20) DEFAULT "pending"'))
+        db.session.execute(db.text('ALTER TABLE user ADD COLUMN stage_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP'))
+        db.session.commit()
+        print("DB migrated successfully")
+    except Exception as e:
+        # Columns already exist, ignore error
+        pass
+
 # === MODELS ===
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
