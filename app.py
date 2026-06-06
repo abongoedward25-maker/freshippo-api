@@ -192,7 +192,6 @@ def dashboard():
     products = Product.query.all()
     
     html = f"""
-    <html><body style="font-family:Arial; padding:20px; max-width:600px; margin:auto">
     <h1>🛒 Welcome {user.name}!</h1>
     <p>Email: {user.email} | Admin: {user.is_admin}</p>
     <hr>
@@ -203,12 +202,13 @@ def dashboard():
         html += "<p>No products yet. Add some!</p>"
     else:
         for p in products:
-            html += f"<div style='border:1px solid #ddd; padding:10px; margin:10px 0'><h3>{p.name}</h3><p>${p.price} | Stock: {p.stock}</p></div>"
+            html += f"<div style='border:1px solid #ddd; padding:10px; margin:10px 0; color:#ddd'><h3>{p.name}</h3><p>${p.price} | Stock: {p.stock}</p></div>"
     
     if user.is_admin:
         html += '<p><a href="/add-product">+ Add New Product</a></p>'
     
-    html += '<p><a href="/loginpage">Logout</a></p></body></html>'
+    html += '<p><a href="/loginpage">Logout</a></p>'
+    
     return f"""
 <style>
 body {{background:#0a0a0a; color:white; font-family:Arial}}
@@ -269,6 +269,8 @@ body {{background:#0a0a0a; color:white; font-family:Arial}}
     {html}
 </div>
 """
+    
+    
 
 # PRODUCTS
 @app.route('/products', methods=['POST'])
