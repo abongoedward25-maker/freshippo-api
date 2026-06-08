@@ -281,26 +281,40 @@ def dashboard():
     """
     return wrapper
 
-# PRODUCTS
-@app.route('/products', methods=['POST'])
-@admin_required
+@app.route('/admin/add-product', methods=['GET', 'POST'])
 def add_product():
-    data = request.get_json()
-    try:
-        product = Product(
-            name=data['name'],
-            description=data.get('description', ''),
-            price=Decimal(str(data['price'])),
-            stock=data.get('stock', 0),
-            category=data.get('category', 'General'),
-            image_url=data.get('image_url', '')
-        )
-        db.session.add(product)
+    if not session.get('is_admin'):
+        return redirect('/loginpage')
+    
+    if request.method == 'POST':
+        name = request.form['name']
+        price = float(request.form['price'])
+        stock = int(request.form['stock'])
+        image_url = request.form['image_url']
+        desc = request.form['desc']
+        
+        new_product = Product(name=name, price=price, stock=stock, 
+                            description=desc, image_url=image_url)
+        db.session.add(new_product)
         db.session.commit()
-        return jsonify({"msg": "Product added", "product": product.to_dict()}), 201
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": str(e)}), 500
+        return redirect('/dashboard')
+    
+    return '''
+    <!doctype html>
+    <html>
+    <head><title>Add Product</title></head>
+    <body style="background:#0f0f23;color:white;font-family:sans-serif">
+    <form method="post" style="max-width:400px;margin:50px auto;padding:20px;background:#1a1a2e;border-radius:10px">
+        <h2>Add New Product</h2>
+        <input name="name" placeholder="Product Name" required style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none">
+        <input name="price" type="number" step="0.01" placeholder="Price $" required style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none">
+        <input name="stock" type="number" placeholder="Stock Quantity" required style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none">
+        <input name="image_url" placeholder="Image URL" style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none">
+        <textarea name="desc" placeholder="Description" rows="3" style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none"></textarea>
+        <button type="submit" style="width:100%;padding:12px;background:#8b5cf6;color:white;border:none;border-radius:5px;font-weight:bold">Add Product</button>
+        <br><br><a href="/dashboard" style="color:#8b5cf6">← Back to Dashboard</a>
+    </form>
+    </body></html>'''
 
 # === WITHDRAWAL ROUTES ===
 @app.route('/withdraw', methods=['GET', 'POST'])
