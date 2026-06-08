@@ -379,15 +379,6 @@ def approve_stage(user_id):
     db.session.commit()
     return 'Stage approved! <a href="/admin/stages">Back</a>'
 
-@app.route('/make-admin/<email>')
-def make_admin(email):
-    user = User.query.filter_by(email=email).first()
-    if user:
-        user.is_admin = True
-        db.session.commit()
-        return f'<h1>✅ {email} is now ADMIN!</h1><p>Delete this route from app.py now for security</p><a href="/dashboard">Go to Dashboard</a>'
-    return 'User not found'
-
 @app.route('/admin/stage/reject/<int:user_id>')
 @admin_required
 def reject_stage(user_id):
