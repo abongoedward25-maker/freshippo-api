@@ -1,5 +1,5 @@
 from flask_jwt_extended import JWTManager, create_access_token, decode_token, jwt_required, get_jwt_identity
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify, make_response, session, redirect
 import os
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -13,6 +13,7 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+app.config['SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'change-this-secret') # needed for session
 
 # === RENDER + PYTHON 3.14 + PSYCOPG3 FIX ===
 db_url = os.getenv('DATABASE_URL', '')
@@ -31,7 +32,7 @@ app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
 
-# === AUTO MIGRATE MISSING COLUMNS - FINAL FIX ===
+# === AUTO MIGRATE MISSING COLUMNS ===
 from sqlalchemy import text
 with app.app_context():
     db.create_all()
@@ -49,7 +50,6 @@ with app.app_context():
             print(f"Added column: {col.split()[0]}")
         except Exception as e:
             db.session.rollback()
-            print(f"Column {col.split()[0]} already exists: {e}")
 
 # === MODELS ===
 class User(db.Model):
@@ -81,11 +81,9 @@ class Product(db.Model):
     image_url = db.Column(db.String(500), default='')
 
     def to_dict(self):
-        return {
-            "id": self.id, "name": self.name, "description": self.description,
-            "price": float(self.price), "stock": self.stock,
-            "category": self.category, "image_url": self.image_url
-        }
+        return {"id": self.id, "name": self.name, "description": self.description,
+                "price": float(self.price), "stock": self.stock,
+                "category": self.category, "image_url": self.image_url}
 
 class CartItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -128,29 +126,16 @@ def admin_required(fn):
         return fn(*args, **kwargs)
     return wrapper
 
-# Create tables
 with app.app_context():
     db.create_all()
 
 # === ROUTES ===
 @app.route('/')
 def homepage():
-    html = """
-    <html>
-        <head><title>Freshippo API</title></head>
-        <body style="font-family:Arial; text-align:center; padding:50px">
-            <h1>🛒 Freshippo API</h1>
-            <p>Status: <b style="color:green">LIVE</b></p>
-            <p><a href="/signup">Sign Up</a> | <a href="/loginpage">Login</a> | <a href="/dashboard">Dashboard</a></p>
-            <h3>API Endpoints:</h3>
-            <p>GET /health</p>
-            <p>POST /register</p>
-            <p>POST /login</p>
-            <p>GET /products</p>
-        </body>
-    </html>
-    """
-    return html
+    return '''<html><head><title>Freshippo API</title></head><body style="font-family:Arial; text-align:center; padding:50px">
+    <h1>🛒 Freshippo API</h1><p>Status: <b style="color:green">LIVE</b></p>
+    <p><a href="/signup">Sign Up</a> | <a href="/loginpage">Login</a> | <a href="/dashboard">Dashboard</a></p>
+    </body></html>'''
 
 @app.route('/health')
 def health():
@@ -160,7 +145,6 @@ def health():
     except Exception as e:
         return jsonify({"status": "error", "db": str(e)}), 500
 
-# AUTH
 @app.route('/auth/register', methods=['POST'])
 def register():
     data = request.get_json()
@@ -181,20 +165,13 @@ def signup_page():
         email = request.form.get('email')
         password = request.form.get('password')
         name = request.form.get('name')
-
         if User.query.filter_by(email=email).first():
             return f"Error: Email exists <br><a href='/signup'>Try again</a>"
-
-        try:
-            user = User(email=email, name=name, phone='')
-            user.password_hash = generate_password_hash(password)
-            db.session.add(user)
-            db.session.commit()
-            return f"<h1>Account Created</h1><p>Welcome {name}</p><a href='/loginpage'>Sign In</a>"
-        except Exception as e:
-            db.session.rollback()
-            return f"Error: {str(e)} <br><a href='/signup'>Try again</a>"
-
+        user = User(email=email, name=name, phone='')
+        user.password_hash = generate_password_hash(password)
+        db.session.add(user)
+        db.session.commit()
+        return f"<h1>Account Created</h1><p>Welcome {name}</p><a href='/loginpage'>Sign In</a>"
     return "<h2>Sign Up</h2><form method='POST'><input name='name' placeholder='Name' required><br><input name='email' type='email' required><br><input name='password' type='password' required><br><button>Sign Up</button></form>"
 
 @app.route('/loginpage', methods=['GET', 'POST'])
@@ -216,17 +193,13 @@ def dashboard():
     token = request.cookies.get('access_token')
     if not token:
         return '<h1>Please login first</h1><a href="/loginpage">Login</a>'
-
     try:
         decoded = decode_token(token)
-        user_id = decoded['sub']
-        user = User.query.get(user_id)
+        user = User.query.get(decoded['sub'])
     except:
         return '<h1>Invalid token</h1><a href="/loginpage">Login again</a>'
 
     products = Product.query.all()
-
-    # Check withdrawal cooldown: 10 days
     last_withdrawal = Withdrawal.query.filter_by(user_id=user.id, status='approved').order_by(Withdrawal.approved_at.desc()).first()
     can_withdraw = True
     days_left = 0
@@ -236,114 +209,72 @@ def dashboard():
             can_withdraw = False
             days_left = 10 - days_passed
 
-    html = "<h1>🛒 Welcome " + user.name + "!</h1>"
-    html += "<p>Email: " + user.email + " | Admin: " + str(user.is_admin) + "</p><hr>"
+    html = f"<h1>🛒 Welcome {user.name}!</h1>"
+    html += f"<p>Email: {user.email} | Admin: {user.is_admin}</p><hr>"
     html += "<h2>Products in Store:</h2>"
-
     if not products:
         html += "<p>No products yet. Add some!</p>"
     else:
         for p in products:
-            html += "<div style='border:1px solid #333; padding:12px; margin:10px 0; background:#0a0a0a; border-radius:8px'><h3 style='margin:0 0 5px 0'>" + p.name + "</h3><p style='margin:0; color:#aaa'>$" + str(p.price) + " | Stock: " + str(p.stock) + "</p></div>"
+            html += f"<div style='border:1px solid #333; padding:12px; margin:10px 0; background:#0a0a0a; border-radius:8px'><h3 style='margin:0 0 5px 0'>{p.name}</h3><p style='margin:0; color:#aaa'>${p.price} | Stock: {p.stock}</p></div>"
 
     if user.is_admin:
-        html += '<p style="margin-top:20px"><a href="/add-product" class="btn">+ Add New Product</a></p>'
+        html += '<p style="margin-top:20px"><a href="/admin/add-product" class="btn">+ Add New Product</a></p>'
         html += '<p><a href="/admin/stages" class="btn">👑 Approve Stages</a></p>'
         html += '<p><a href="/admin/withdrawals" class="btn">💰 Approve Withdrawals</a></p>'
 
-    html += '<p style="margin-top:30px"><a href="/loginpage" class="btn red">🚪 Logout</a></p>'
+    withdraw_btn = f'<a href="/withdraw" class="btn">💰 Request Withdrawal</a>' if can_withdraw else f'<span style="color:#ffaa00">⏳ Withdrawal available in {days_left} days</span>'
 
-    # Withdrawal button logic
-    withdraw_btn = '<a href="/withdraw" class="btn">💰 Request Withdrawal</a>' if can_withdraw else '<span style="color:#ffaa00">⏳ Withdrawal available in ' + str(days_left) + ' days</span>'
-
-    wrapper = """
-    <style>
-    body {background:#0a0a0a; color:white; font-family:Arial; margin:0}
-   .watermark {position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-15deg); font-size: 15vw; color: rgba(168, 85, 247, 0.08); z-index: 0; pointer-events: none; white-space: nowrap}
-   .content {position: relative; z-index: 1; padding: 20px; max-width: 800px; margin: auto}
-   .box {padding: 18px; margin: 12px 0; background: #111; border-left: 3px solid #a855f7; border-radius: 10px;}
-   .btn {display: inline-block; padding: 10px 20px; margin: 8px 5px; background: #a855f7; color: white; text-decoration: none; border-radius: 8px; font-weight: 600;}
-   .btn.red {background: #ff4444}
-   .stats {display: flex; gap: 15px; margin-top: 10px}
-   .stat {flex: 1; background: #0a0a0a; padding: 12px; border-radius: 6px; text-align: center}
-    </style>
-    <div class="watermark">Freshippo Freshippo Freshippo</div>
-    <div class="content">
-        <div class="box">1️⃣ Admin Panel | Status: """ + ("✅ Active" if user.is_admin else "❌ No Access") + """</div>
-        <div class="box">2️⃣ Products: """ + str(len(products)) + """ items in store</div>
-        <div class="box">3️⃣ Settings - Coming soon</div>
-        <div class="box">4️⃣ Withdrawal<div class="stats"><div class="stat"><b>$""" + str(user.balance) + """</b><br>Balance</div><div class="stat"><b>$""" + str(user.total_withdrawn) + """</b><br>Total Withdrawn</div></div>""" + withdraw_btn + """<p style="font-size:12px; color:#aaa; margin-top:8px">10-day cooldown after each withdrawal</p></div>
-        <div class="box">5️⃣ Stages<div class="stats"><div class="stat"><b>Stage """ + str(user.current_stage) + """</b><br>Current</div><div class="stat"><b>""" + user.stage_status.upper() + """</b><br>Status</div></div><p style="font-size:12px; color:#aaa; margin-top:8px">Admin must approve Stage 2 & 3 upgrades</p></div>
-        <div class="box" style="text-align:center">6️⃣ Quick Actions<br><a href="/" class="btn">🏠 Home</a><a href="/loginpage" class="btn red">🚪 Logout</a></div>
-        <hr style="margin:30px 0; border-color:#333">
-        """ + html + """
-    </div>
-    """
+    wrapper = f"""<style>body{{background:#0a0a0a;color:white;font-family:Arial;margin:0}}.watermark{{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-15deg);font-size:15vw;color:rgba(168,85,247,0.08);z-index:0;pointer-events:none;white-space:nowrap}}.content{{position:relative;z-index:1;padding:20px;max-width:800px;margin:auto}}.box{{padding:18px;margin:12px 0;background:#111;border-left:3px solid #a855f7;border-radius:10px}}.btn{{display:inline-block;padding:10px 20px;margin:8px 5px;background:#a855f7;color:white;text-decoration:none;border-radius:8px;font-weight:600}}.btn.red{{background:#ff4444}}.stats{{display:flex;gap:15px;margin-top:10px}}.stat{{flex:1;background:#0a0a0a;padding:12px;border-radius:6px;text-align:center}}</style><div class="watermark">Freshippo</div><div class="content"><div class="box">1️⃣ Admin Panel | Status: {'✅ Active' if user.is_admin else '❌ No Access'}</div><div class="box">2️⃣ Products: {len(products)} items in store</div><div class="box">4️⃣ Withdrawal<div class="stats"><div class="stat"><b>${user.balance}</b><br>Balance</div><div class="stat"><b>${user.total_withdrawn}</b><br>Total Withdrawn</div></div>{withdraw_btn}<p style="font-size:12px;color:#aaa;margin-top:8px">10-day cooldown</p></div><div class="box">5️⃣ Stages<div class="stats"><div class="stat"><b>Stage {user.current_stage}</b><br>Current</div><div class="stat"><b>{user.stage_status.upper()}</b><br>Status</div></div></div><hr style="margin:30px 0">{html}</div>"""
     return wrapper
 
 @app.route('/admin/add-product', methods=['GET', 'POST'])
 def add_product():
-    if not session.get('is_admin'):
+    token = request.cookies.get('access_token')
+    if not token:
         return redirect('/loginpage')
-    
+    try:
+        decoded = decode_token(token)
+        user = User.query.get(decoded['sub'])
+        if not user or not user.is_admin:
+            return redirect('/loginpage')
+    except:
+        return redirect('/loginpage')
+
     if request.method == 'POST':
         name = request.form['name']
         price = float(request.form['price'])
         stock = int(request.form['stock'])
         image_url = request.form['image_url']
         desc = request.form['desc']
-        
-        new_product = Product(name=name, price=price, stock=stock, 
-                            description=desc, image_url=image_url)
+        new_product = Product(name=name, price=price, stock=stock, description=desc, image_url=image_url)
         db.session.add(new_product)
         db.session.commit()
         return redirect('/dashboard')
-    
-    return '''
-    <!doctype html>
-    <html>
-    <head><title>Add Product</title></head>
-    <body style="background:#0f0f23;color:white;font-family:sans-serif">
-    <form method="post" style="max-width:400px;margin:50px auto;padding:20px;background:#1a1a2e;border-radius:10px">
-        <h2>Add New Product</h2>
-        <input name="name" placeholder="Product Name" required style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none">
-        <input name="price" type="number" step="0.01" placeholder="Price $" required style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none">
-        <input name="stock" type="number" placeholder="Stock Quantity" required style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none">
-        <input name="image_url" placeholder="Image URL" style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none">
-        <textarea name="desc" placeholder="Description" rows="3" style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none"></textarea>
-        <button type="submit" style="width:100%;padding:12px;background:#8b5cf6;color:white;border:none;border-radius:5px;font-weight:bold">Add Product</button>
-        <br><br><a href="/dashboard" style="color:#8b5cf6">← Back to Dashboard</a>
-    </form>
-    </body></html>'''
 
-# === WITHDRAWAL ROUTES ===
+    return '''<!doctype html><html><head><title>Add Product</title></head><body style="background:#0f0f23;color:white;font-family:sans-serif"><form method="post" style="max-width:400px;margin:50px auto;padding:20px;background:#1a1a2e;border-radius:10px"><h2>Add New Product</h2><input name="name" placeholder="Product Name" required style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none"><input name="price" type="number" step="0.01" placeholder="Price $" required style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none"><input name="stock" type="number" placeholder="Stock Quantity" required style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none"><input name="image_url" placeholder="Image URL" style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none"><textarea name="desc" placeholder="Description" rows="3" style="width:100%;padding:10px;margin:8px 0;border-radius:5px;border:none"></textarea><button type="submit" style="width:100%;padding:12px;background:#8b5cf6;color:white;border:none;border-radius:5px;font-weight:bold">Add Product</button><br><br><a href="/dashboard" style="color:#8b5cf6">← Back to Dashboard</a></form></body></html>'''
+
 @app.route('/withdraw', methods=['GET', 'POST'])
 @jwt_required()
 def withdraw():
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
-
-    # Check 10-day cooldown
     last_withdrawal = Withdrawal.query.filter_by(user_id=user.id, status='approved').order_by(Withdrawal.approved_at.desc()).first()
     if last_withdrawal:
         days_passed = (datetime.utcnow() - last_withdrawal.approved_at).days
         if days_passed < 10:
-            return '<h1>⏳ Cooldown active</h1><p>Next withdrawal in ' + str(10 - days_passed) + ' days</p><a href="/dashboard">Back</a>'
-
+            return f'<h1>⏳ Cooldown active</h1><p>Next withdrawal in {10 - days_passed} days</p><a href="/dashboard">Back</a>'
     if request.method == 'POST':
         amount = Decimal(request.form.get('amount', '0'))
         if amount <= 0 or amount > user.balance:
             return 'Invalid amount <br><a href="/dashboard">Back</a>'
-
         withdrawal = Withdrawal(user_id=user.id, amount=amount)
         db.session.add(withdrawal)
         user.balance -= amount
         db.session.commit()
-        return '<h1>✅ Request sent!</h1><p>Admin will review your $' + str(amount) + ' withdrawal</p><a href="/dashboard">Back</a>'
+        return f'<h1>✅ Request sent!</h1><p>Admin will review ${amount}</p><a href="/dashboard">Back</a>'
+    return f'<h2>Request Withdrawal</h2><p>Balance: ${user.balance}</p><form method="POST"><input name="amount" type="number" step="0.01" placeholder="Amount" required><br><button>Request</button></form>'
 
-    return '<h2>Request Withdrawal</h2><p>Balance: $' + str(user.balance) + '</p><form method="POST"><input name="amount" type="number" step="0.01" placeholder="Amount" required><br><button>Request</button></form>'
-
-# === ADMIN ROUTES ===
 @app.route('/admin/withdrawals')
 @admin_required
 def admin_withdrawals():
@@ -351,7 +282,7 @@ def admin_withdrawals():
     html = '<h1>💰 Pending Withdrawals</h1>'
     for w in withdrawals:
         user = User.query.get(w.user_id)
-        html += '<div style="border:1px solid #444; padding:15px; margin:10px 0; background:#111"><p><b>' + user.name + '</b> - $' + str(w.amount) + '</p><a href="/admin/withdraw/approve/' + str(w.id) + '" class="btn">Approve</a> <a href="/admin/withdraw/reject/' + str(w.id) + '" class="btn red">Reject</a></div>'
+        html += f'<div style="border:1px solid #444; padding:15px; margin:10px 0; background:#111"><p><b>{user.name}</b> - ${w.amount}</p><a href="/admin/withdraw/approve/{w.id}" class="btn">Approve</a> <a href="/admin/withdraw/reject/{w.id}" class="btn red">Reject</a></div>'
     return html + '<p><a href="/dashboard">Back</a></p>'
 
 @app.route('/admin/withdraw/approve/<int:w_id>')
@@ -371,7 +302,7 @@ def reject_withdraw(w_id):
     w = Withdrawal.query.get(w_id)
     user = User.query.get(w.user_id)
     w.status = 'rejected'
-    user.balance += w.amount # refund
+    user.balance += w.amount
     db.session.commit()
     return 'Rejected & refunded! <a href="/admin/withdrawals">Back</a>'
 
@@ -381,7 +312,7 @@ def admin_stages():
     users = User.query.filter(User.stage_status=='pending', User.current_stage>1).all()
     html = '<h1>👑 Pending Stage Approvals</h1>'
     for u in users:
-        html += '<div style="border:1px solid #444; padding:15px; margin:10px 0; background:#111"><p><b>' + u.name + '</b> wants Stage ' + str(u.current_stage) + '</p><a href="/admin/stage/approve/' + str(u.id) + '" class="btn">Approve</a> <a href="/admin/stage/reject/' + str(u.id) + '" class="btn red">Reject</a></div>'
+        html += f'<div style="border:1px solid #444; padding:15px; margin:10px 0; background:#111"><p><b>{u.name}</b> wants Stage {u.current_stage}</p><a href="/admin/stage/approve/{u.id}" class="btn">Approve</a> <a href="/admin/stage/reject/{u.id}" class="btn red">Reject</a></div>'
     return html + '<p><a href="/dashboard">Back</a></p>'
 
 @app.route('/admin/stage/approve/<int:user_id>')
@@ -401,3 +332,6 @@ def reject_stage(user_id):
     user.stage_status = 'approved'
     db.session.commit()
     return 'Stage rejected! <a href="/admin/stages">Back</a>'
+
+if __name__ == '__main__':
+    app.run(debug=True)
