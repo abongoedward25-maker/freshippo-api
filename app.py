@@ -63,7 +63,7 @@ class User(db.Model):
     total_withdrawn = db.Column(db.Numeric(10, 2), default=0.00)
     current_stage = db.Column(db.Integer, default=1)
     stage_status = db.Column(db.String(20), default='pending')
-    stage_updated_at = db.Column(db.DateTime, server_default=db.func.now()) # FIXED: DateTime not timestamp
+    stage_updated_at = db.Column(db.DateTime, server_default=db.func.now())
     created_at = db.Column(db.DateTime, server_default=db.func.now())
 
     def to_dict(self):
