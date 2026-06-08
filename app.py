@@ -63,8 +63,8 @@ class User(db.Model):
     total_withdrawn = db.Column(db.Numeric(10, 2), default=0.00)  # NEW: lifetime withdrawn
     current_stage = db.Column(db.Integer, default=1)  # NEW: 1, 2, 3
     stage_status = db.Column(db.String(20), default='pending')  # NEW: pending/approved
-    stage_updated_at = db.Column(db.DateTime, server_default=db.func.now())  # NEW: when stage changed
-    created_at = db.Column(db.DateTime, server_default=db.func.now())
+    stage_updated_at = db.Column(db.timestamp, server_default=db.func.now())  # NEW: when stage changed
+    created_at = db.Column(db.timestamp, server_default=db.func.now())
 
     def to_dict(self):
         return {"id": self.id, "email": self.email, "name": self.name, "phone": self.phone, 
@@ -99,7 +99,7 @@ class Order(db.Model):
     total_amount = db.Column(db.Numeric(10, 2), nullable=False)
     status = db.Column(db.String(20), default='pending')
     address = db.Column(db.Text, default='')
-    created_at = db.Column(db.DateTime, server_default=db.func.now())
+    created_at = db.Column(db.timestamp, server_default=db.func.now())
 
 class OrderItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -113,8 +113,8 @@ class Withdrawal(db.Model):  # NEW TABLE
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     status = db.Column(db.String(20), default='pending')  # pending/approved/rejected
-    requested_at = db.Column(db.DateTime, server_default=db.func.now())
-    approved_at = db.Column(db.DateTime, nullable=True)
+    requested_at = db.Column(db.timestamp, server_default=db.func.now())
+    approved_at = db.Column(db.timestamp, nullable=True)
 
 # === DECORATOR ===
 def admin_required(fn):
@@ -231,7 +231,7 @@ def dashboard():
     can_withdraw = True
     days_left = 0
     if last_withdrawal:
-        days_passed = (datetime.utcnow() - last_withdrawal.approved_at).days
+        days_passed (timestamp.utcnow() - last_withdrawal.approved_at).days
         if days_passed < 10:
             can_withdraw = False
             days_left = 10 - days_passed
@@ -312,7 +312,7 @@ def withdraw():
     # Check 10-day cooldown
     last_withdrawal = Withdrawal.query.filter_by(user_id=user.id, status='approved').order_by(Withdrawal.approved_at.desc()).first()
     if last_withdrawal:
-        days_passed = (datetime.utcnow() - last_withdrawal.approved_at).days
+        days_passed = (timestamp.utcnow() - last_withdrawal.approved_at).days
         if days_passed < 10:
             return '<h1>⏳ Cooldown active</h1><p>Next withdrawal in ' + str(10 - days_passed) + ' days</p><a href="/dashboard">Back</a>'
     
