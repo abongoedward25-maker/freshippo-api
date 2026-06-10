@@ -543,3 +543,24 @@ def admin_dashboard():
     table{width:100%;border-collapse:collapse;margin-top:15px}th,td{padding:12px;border-bottom:1px solid #333;text-align:left}
     th{background:rgba(168,85,247,0.2)}.btn{padding:8px 15px;border:none;border-radius:8px;cursor:pointer;font-weight:bold;margin:2px;text-decoration:none;display:inline-block}
    .approve{background:#22c55e;color:white}.reject{background:#ef4444;color:white}.btn-link{padding:12px 20px;background:linear-gradient(135deg,#a855f7,#7c3aed);color:white;text-decoration:none;border-radius:10px;margin:5px;display:inline-block}</style>
+    
+    <div class="container">
+    <h1>👑 Admin Panel</h1>
+    <div style="margin:20px 0">
+        <a href="/admin/add-product" class="btn-link">➕ Add Product</a>
+        <a href="/dashboard" class="btn-link">🏠 User View</a>
+    </div>
+    
+    <div class="box">
+    <h3>💰 Pending Withdrawals</h3>
+    <table>
+    <tr><th>ID</th><th>User</th><th>Amount</th><th>Phone</th><th>Date</th><th>Action</th></tr>'''
+    
+    for w in pending_withdrawals:
+        u = User.query.get(w.user_id)
+        html += f'''<tr>
+            <td>{w.id}</td>
+            <td>{u.name} - {u.email}</td>
+            <td>${w.amount}</td>
+            <td>{w.phone}</td>
+            <td>{w.requested_at.strftime('%Y-%m-%d
