@@ -491,3 +491,29 @@ def reset_password(user_id):
 # === FIX: add_product COMPLETE 100% ===
 @app.route('/admin/add-product', methods=['GET', 'POST'])
 @admin_required
+def add_product():
+    if request.method == 'POST':
+        name = request.form.get('name')
+        price = request.form.get('price')
+        stock = request.form.get('stock')
+        image_url = request.form.get('image_url')
+        description = request.form.get('description', '')
+        category = request.form.get('category', 'General')
+        
+        p = Product(name=name, price=price, stock=stock, image_url=image_url, description=description, category=category)
+        db.session.add(p)
+        db.session.commit()
+        return redirect('/dashboard')
+    
+    return '''<style>body{background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);color:white;font-family:Poppins}</style>
+    <div style="text-align:right;padding:20px"><a href="/dashboard" style="padding:10px 20px;background:linear-gradient(135deg,#a855f7,#7c3aed);color:white;text-decoration:none;border-radius:10px">🏠 Home</a></div>
+    <h2 style="text-align:center;margin:30px 0;font-size:32px">+ Add Product</h2>
+    <form method="POST" style="max-width:400px;margin:auto;padding:30px;background:rgba(255,255,255,0.05);backdrop-filter:blur(20px);border-radius:20px;border:1px solid rgba(168,85,247,0.4)">
+        <input name="name" placeholder="Product Name" required style="width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #333;background:#0a0a0a;color:white">
+        <input name="price" type="number" step="0.01" placeholder="Price $" required style="width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #333;background:#0a0a0a;color:white">
+        <input name="stock" type="number" placeholder="Stock" required style="width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #333;background:#0a0a0a;color:white">
+        <input name="image_url" placeholder="Image URL" style="width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #333;background:#0a0a0a;color:white">
+        <input name="category" placeholder="Category" value="General" style="width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #333;background:#0a0a0a;color:white">
+        <textarea name="description" placeholder="Description" style="width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #333;background:#0a0a0a;color:white;height:80px"></textarea>
+        <button style="width:100%;padding:14px;background:linear-gradient(135deg,#22c55e,#16a34a);color:white;border:none;border-radius:10px;font-weight:bold;margin-top:10px">Add Product</button>
+    </form>'''
