@@ -558,9 +558,43 @@ def admin_dashboard():
     
     for w in pending_withdrawals:
         u = User.query.get(w.user_id)
+        date_str = w.requested_at.strftime("%Y-%m-%d %H:%M")  # <-- Hapa nje ya f-string
         html += f'''<tr>
             <td>{w.id}</td>
             <td>{u.name} - {u.email}</td>
             <td>${w.amount}</td>
             <td>{w.phone}</td>
-            <td>{w.requested_at.strftime('%Y-%m-%d
+            <td>{date_str}</td>
+            <td>
+                <a href="/admin/withdraw/approve/{w.id}" class="btn approve">Approve</a>
+                <a href="/admin/withdraw/reject/{w.id}" class="btn reject">Reject</a>
+            </td>
+        </tr>'''
+    
+    if not pending_withdrawals:
+        html += '<tr><td colspan="6" style="text-align:center;padding:20px;color:#888">No pending withdrawals</td></tr>'
+    
+    html += '''</table></div>
+    
+    <div class="box">
+    <h3>🎯 Pending Stage Requests</h3>
+    <table>
+    <tr><th>ID</th><th>User</th><th>Stage</th><th>Balance</th><th>Requested</th><th>Action</th></tr>'''
+    
+    for r in pending_stages:
+        u = User.query.get(r.user_id)
+        date_str = r.requested_at.strftime("%Y-%m-%d %H:%M")  # <-- Hapa pia nje
+        html += f'''<tr>
+            <td>{r.id}</td>
+            <td>{u.name} - {u.email}</td>
+            <td>Stage {r.stage_number}</td>
+            <td>${u.balance}</td>
+            <td>{date_str}</td>
+            <td><a href="/admin/stage/approve/{r.id}" class="btn approve">Approve</a></td>
+        </tr>'''
+    
+    if not pending_stages:
+        html += '<tr><td colspan="6" style="text-align:center;padding:20px;color:#888">No pending stage requests</td></tr>'
+    
+    html += '''</table></div></div>'''
+    return html
