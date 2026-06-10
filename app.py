@@ -378,3 +378,6 @@ def withdraw():
         <input name="phone" type="text" placeholder="Confirm phone: {user.phone}" required style="width:100%;padding:14px;margin:8px 0;border-radius:10px;border:1px solid #333;background:#0a0a0a;color:white"><br>
         <input name="password" type="password" placeholder="Confirm Password" required style="width:100%;padding:14px;margin:8px 0;border-radius:10px;border:1px solid #333;background:#0a0a0a;color:white"><br>
         <button style="width:100%;padding:15px;background:linear-gradient(135deg,#a855f7,#7c3aed);color:white;border
+                </form>
+    </div>
+'''
